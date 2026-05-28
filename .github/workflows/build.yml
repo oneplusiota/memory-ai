@@ -40,6 +40,9 @@ jobs:
       - name: Grant Gradle execute permission
         run: chmod +x android/gradlew
 
+      - name: Generate Android icon mipmap files from app.json
+        run: npx expo prebuild --platform android --no-install
+
       - name: Create Android assets directory
         run: mkdir -p android/app/src/main/assets
 
