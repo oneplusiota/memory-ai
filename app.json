@@ -5,10 +5,12 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "icon": "./assets/memoryai.png",
     "android": {
       "package": "com.memoryai.app",
       "adaptiveIcon": {
-        "backgroundColor": "#6200EE"
+        "foregroundImage": "./assets/memoryai.png",
+        "backgroundColor": "#6D28D9"
       },
       "permissions": [
         "android.permission.RECORD_AUDIO",
