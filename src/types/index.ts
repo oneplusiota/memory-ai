@@ -6,12 +6,17 @@ export type NoteNode = {
   summary: string;
   outlinks: string[];
   lastModified: number;
+  // Zettelkasten / Dataview fields (optional, only set on atom notes)
+  type?: string;    // person | project | concept | decision | area | tool | daily | conversation
+  area?: string;    // work | personal | health | finance | learning | other
+  status?: string;  // active | dormant | archived
 };
 
 export type RoutingDecision = {
-  action: 'append_to_topic' | 'create_topic' | 'create_log_only' | 'link_notes';
+  action: 'update_atom' | 'create_atom' | 'log_only' | 'link_notes';
   target_note: string;
-  content: string;
+  atom_content: string;
+  daily_entry: string;
   confidence: 'high' | 'medium' | 'low';
   reasoning: string;
 };
@@ -27,6 +32,33 @@ export type VaultIndex = {
   corpusStats: Record<string, number>;
   links: Record<string, string[]>;
   builtAt: number;
+};
+
+export type ConversationMessage = {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  timestamp: number;
+};
+
+export type ConversationResponse = {
+  reply: string;
+  intent: 'answer' | 'acknowledge' | 'clarify';
+  suggest_save: boolean;
+};
+
+export type STTMode = 'native' | 'gemini-audio' | 'native-corrected';
+
+export type OrbState = 'idle' | 'listening' | 'thinking' | 'responding' | 'paused';
+
+export type LLMProvider = 'gemini' | 'groq';
+
+export type VaultStats = {
+  total: number;
+  atoms: number;
+  daily: number;
+  conversations: number;
+  topTags: string[];
 };
 
 export type AppState =
