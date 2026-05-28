@@ -6,6 +6,19 @@ Built for Android as a native APK using React Native + Expo bare workflow.
 
 ---
 
+## Install (No Build Required)
+
+> **Quickest path** — no Android Studio or build tools needed.
+
+1. Go to the [**Releases page**](https://github.com/oneplusiota/memory-ai/releases) and download the latest `memory-ai-vX.X.X.apk`
+2. On your Android phone: **Settings → Apps → Special app access → Install unknown apps** → allow your browser or Files app to install APKs
+3. Open the downloaded APK and tap **Install**
+4. Launch **memory.ai** → **Settings (⚙️)** → enter your API key → pick your Obsidian vault folder
+
+> **Note on Google Sign-In**: The pre-built APK uses a CI-generated keystore, so Google Sign-In won't work via the pre-built APK. This is fine — Sign-In is identity-only and **not required**. All AI features and vault sync work without it.
+
+---
+
 ## Features
 
 - 🎙️ **Tap-to-record** — live, editable transcript with continuous Android STT
@@ -213,6 +226,23 @@ tags: [conversation]
 | Native + AI Correction | Native speed, Gemini cleans up errors | ~1s overhead | Better |
 
 Switch in **Settings → Voice Transcription**.
+
+---
+
+## Releasing a New APK
+
+Tag the commit and push — GitHub Actions builds and attaches the APK automatically:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The workflow (`.github/workflows/build.yml`) requires one GitHub secret:
+
+| Secret | How to get it |
+|---|---|
+| `GOOGLE_SERVICES_JSON` | `base64 -i android/app/google-services.json \| pbcopy` then paste in GitHub → Settings → Secrets → Actions |
 
 ---
 
