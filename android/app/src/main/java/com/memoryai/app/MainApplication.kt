@@ -1,4 +1,4 @@
-package com.memoryai
+package com.memoryai.app
 
 import android.app.Application
 import android.content.res.Configuration

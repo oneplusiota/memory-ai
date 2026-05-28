@@ -1,4 +1,4 @@
-package com.memoryai
+package com.memoryai.app
 
 import android.os.Build
 import android.os.Bundle
