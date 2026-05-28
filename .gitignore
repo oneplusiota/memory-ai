@@ -30,7 +30,14 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
 .env*.local
+
+# Android secrets — never commit these
+android/app/google-services.json
+android/app/debug.keystore
+android/app/*.keystore
+android/local.properties
 
 # typescript
 *.tsbuildinfo
