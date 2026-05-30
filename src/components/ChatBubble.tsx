@@ -1,6 +1,7 @@
 import React from 'react';
-import { StyleSheet, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, ToastAndroid, TouchableOpacity, View } from 'react-native';
 import { Text } from 'react-native-paper';
+import * as Clipboard from 'expo-clipboard';
 import type { ConversationMessage } from '@/types';
 
 type Props = {
@@ -11,6 +12,12 @@ type Props = {
 
 export function ChatBubble({ message, suggestSave, onSave }: Props) {
   const isUser = message.role === 'user';
+
+  const handleCopy = async () => {
+    await Clipboard.setStringAsync(message.text);
+    ToastAndroid.show('Copied', ToastAndroid.SHORT);
+  };
+
   return (
     <View style={[styles.row, isUser ? styles.rowUser : styles.rowAI]}>
       {!isUser && (
@@ -19,11 +26,17 @@ export function ChatBubble({ message, suggestSave, onSave }: Props) {
         </View>
       )}
       <View style={styles.bubbleWrapper}>
-        <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAI]}>
-          <Text style={[styles.text, isUser ? styles.textUser : styles.textAI]}>
-            {message.text}
-          </Text>
-        </View>
+        <TouchableOpacity
+          onLongPress={handleCopy}
+          activeOpacity={0.85}
+          delayLongPress={400}
+        >
+          <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAI]}>
+            <Text style={[styles.text, isUser ? styles.textUser : styles.textAI]}>
+              {message.text}
+            </Text>
+          </View>
+        </TouchableOpacity>
         {suggestSave && onSave && (
           <TouchableOpacity style={styles.savePill} onPress={onSave}>
             <Text style={styles.savePillText}>💾 Save to vault</Text>
