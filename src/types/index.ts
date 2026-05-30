@@ -4,8 +4,11 @@ export type NoteNode = {
   tags: string[];
   aliases: string[];
   summary: string;
+  semanticSummary?: string;
   outlinks: string[];
   lastModified: number;
+  // Phase 2: on-device embedding vector (384-dim, null until embedded)
+  embedding?: number[];
   // Zettelkasten / Dataview fields (optional, only set on atom notes)
   type?: string;    // person | project | concept | decision | area | tool | daily | conversation
   area?: string;    // work | personal | health | finance | learning | other
@@ -28,14 +31,6 @@ export type RoutingDecision = {
 export type SearchResult = {
   note: NoteNode;
   score: number;
-};
-
-export type VaultIndex = {
-  notes: Record<string, NoteNode>;
-  tfidf: Record<string, Record<string, number>>;
-  corpusStats: Record<string, number>;
-  links: Record<string, string[]>;
-  builtAt: number;
 };
 
 export type ConversationMessage = {

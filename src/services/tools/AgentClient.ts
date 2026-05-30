@@ -63,11 +63,7 @@ export async function agentChat(
   while (iterations < MAX_ITERATIONS) {
     iterations++;
 
-    const response = await llmChatWithTools(
-      messages,
-      tools,
-      pendingToolResults.length > 0 ? pendingToolResults : undefined,
-    );
+    const response = await llmChatWithTools(messages, tools);
 
     if (response.type === 'text') {
       return response.text;
@@ -107,11 +103,18 @@ export async function agentChat(
       pendingToolResults.push(result);
     }
 
-    // Append a synthetic assistant turn representing the tool calls
-    // (needed so the LLM sees the correct conversation history)
+    // Append assistant tool-call turn AND the tool-result user turn.
+    // Both must be in message history so all providers see a valid
+    // tool_use → tool_result sequence in every subsequent iteration.
     messages.push({
       role: 'assistant',
-      content: `[Called tools: ${response.toolCalls.map(tc => tc.name).join(', ')}]`,
+      content: '',
+      toolCalls: response.toolCalls,
+    });
+    messages.push({
+      role: 'user',
+      content: '',
+      toolResults: pendingToolResults,
     });
   }
 
