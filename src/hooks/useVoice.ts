@@ -65,14 +65,22 @@ export function useVoice(
 
   useSpeechRecognitionEvent('error', (event) => {
     if (sttMode !== 'native' && sttMode !== 'native-corrected') return;
-    const code = (event as any).code ?? '';
+    const code = String((event as any).code ?? '');
+    const message = String((event as any).message ?? '').toLowerCase();
     // Recoverable conditions — don't surface as errors, just restart silently
+    // Android codes: 4=ERROR_SERVER, 5=ERROR_CLIENT, 6=ERROR_SPEECH_TIMEOUT,
+    //                7=ERROR_NO_MATCH, 13=ERROR_SERVER_DISCONNECTED
     const recoverable =
       code === 'no-speech' ||
       code === 'aborted' ||
-      code === 7 ||
       code === 'network' ||
-      code === 6;
+      code === '4' ||
+      code === '5' ||
+      code === '6' ||
+      code === '7' ||
+      code === '13' ||
+      message.includes('server') ||
+      message.includes('disconnected');
     if (!userStoppedRef.current && recoverable) {
       restartTimerRef.current = setTimeout(() => {
         restartTimerRef.current = null;
