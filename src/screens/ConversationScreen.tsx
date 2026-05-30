@@ -68,7 +68,7 @@ export function ConversationScreen() {
     toolSteps, pendingConfirm, confirmToolWrite,
     handleTranscriptChange, toggleRecording,
     sendMessage, saveToVault, loadConversation, persistConversation, clearConversation,
-  } = useConversation(sttMode);
+  } = useConversation(sttMode, route.params?.initialMode as ConversationMode | undefined);
 
   // Load a past conversation when vaultUri becomes available (loadConversation
   // changes reference only when vaultUri changes, so this retries until ready)

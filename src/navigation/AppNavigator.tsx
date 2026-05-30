@@ -12,7 +12,7 @@ import { ToolsScreen } from '@/screens/ToolsScreen';
 import type { RoutingDecision } from '@/types';
 
 export type RootStackParamList = {
-  Conversation: { resumeFilePath?: string } | undefined;
+  Conversation: { resumeFilePath?: string; initialMode?: string } | undefined;
   Settings: undefined;
   Confirm: { decision: RoutingDecision; vaultUri: string; conversationFilePath?: string };
   History: undefined;

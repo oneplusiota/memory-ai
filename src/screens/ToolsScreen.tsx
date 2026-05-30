@@ -81,10 +81,7 @@ export function ToolsScreen() {
   }, [vaultUri, refresh]);
 
   const handleNewTool = useCallback(() => {
-    // Navigate to conversation in tool_builder mode
-    navigation.navigate('Conversation');
-    // We rely on the user switching to tool_builder mode in the conversation screen
-    // A future enhancement could auto-set the mode via route params
+    navigation.navigate('Conversation', { initialMode: 'tool_builder' });
   }, [navigation]);
 
   const renderBuiltin = ({ item }: { item: ToolDefinition }) => (

@@ -23,14 +23,14 @@ const CONVERSATION_MODE_KEY = 'conversation_mode';
 let msgIdCounter = 0;
 const mkId = () => String(++msgIdCounter);
 
-export function useConversation(sttMode: STTMode = 'native') {
+export function useConversation(sttMode: STTMode = 'native', initialMode?: ConversationMode) {
   const { vaultUri } = useVault();
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const messagesRef = useRef<ConversationMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastSuggestSave, setLastSuggestSave] = useState(false);
-  const [conversationMode, setConversationModeState] = useState<ConversationMode>('journal');
+  const [conversationMode, setConversationModeState] = useState<ConversationMode>(initialMode ?? 'journal');
   const conversationFilePathRef = useRef<string | null>(null);
   const lifeContextRef = useRef<string | null>(null);
 
@@ -39,11 +39,13 @@ export function useConversation(sttMode: STTMode = 'native') {
     messagesRef.current = messages;
   }, [messages]);
 
-  // Load persisted conversation mode on mount
+  // Load persisted conversation mode on mount; skip if caller supplied initialMode
   useEffect(() => {
+    if (initialMode) return;
     SecureStore.getItemAsync(CONVERSATION_MODE_KEY).then((v) => {
       if (v) setConversationModeState(v as ConversationMode);
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const setConversationMode = useCallback(async (mode: ConversationMode) => {
