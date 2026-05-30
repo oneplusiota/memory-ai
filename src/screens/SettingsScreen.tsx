@@ -13,8 +13,8 @@ import { indexNote, tokenize } from '@/services/indexer/TFIDFIndexer';
 import { indexLinks } from '@/services/indexer/GraphIndexer';
 import { noteTitle } from '@/utils/pathUtils';
 import {
-  saveGeminiKey, saveGroqKey, saveActiveProvider,
-  saveGeminiModelPref, saveGroqModelPref, loadStoredKeys,
+  saveGeminiKey, saveGroqKey, saveClaudeKey, saveActiveProvider,
+  saveGeminiModelPref, saveGroqModelPref, saveClaudeModelPref, loadStoredKeys,
 } from '@/services/gemini/GeminiClient';
 import {
   saveWebSearchProvider, saveTavilyKey, saveBraveKey,
@@ -28,18 +28,44 @@ const AGENT_MODE_KEY = 'agent_mode';
 const STT_MODE_KEY = 'stt_mode';
 
 const GEMINI_MODELS = [
-  { value: 'gemini-2.0-flash', label: 'gemini-2.0-flash', desc: '1,500/day free · recommended' },
-  { value: 'gemini-2.5-flash', label: 'gemini-2.5-flash', desc: '500/day free · most capable' },
-  { value: 'gemini-1.5-flash', label: 'gemini-1.5-flash', desc: '1,500/day free · legacy' },
+  // ── Free tier ──
+  { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', desc: '1,500/day free · recommended' },
+  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', desc: '500/day free · most capable free' },
+  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash', desc: '1,500/day free · legacy' },
+  // ── Paid ──
+  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro ★', desc: 'Paid · best reasoning & coding' },
+  { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro ★', desc: 'Paid · 1M context window' },
+  { value: 'gemini-2.0-flash-thinking-exp', label: 'Gemini 2.0 Flash Thinking ★', desc: 'Paid · extended thinking' },
 ];
 
 const GROQ_MODELS = [
+  // ── Free tier ──
   { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B Versatile', desc: 'Best quality · recommended' },
   { value: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B Instant', desc: 'Fastest · low latency' },
   { value: 'llama3-70b-8192', label: 'Llama 3 70B', desc: 'High quality · 8k context' },
   { value: 'llama3-8b-8192', label: 'Llama 3 8B', desc: 'Fast · 8k context' },
   { value: 'mixtral-8x7b-32768', label: 'Mixtral 8x7B', desc: 'Long context · 32k tokens' },
   { value: 'gemma2-9b-it', label: 'Gemma 2 9B', desc: 'Google · instruction-tuned' },
+  // ── Paid tier ──
+  { value: 'llama-3.3-70b-specdec', label: 'Llama 3.3 70B SpecDec ★', desc: 'Paid · speculative decoding, faster' },
+  { value: 'llama-3.2-90b-vision-preview', label: 'Llama 3.2 90B Vision ★', desc: 'Paid · multimodal, largest Llama' },
+  { value: 'deepseek-r1-distill-llama-70b', label: 'DeepSeek R1 70B ★', desc: 'Paid · chain-of-thought reasoning' },
+  { value: 'qwen-qwq-32b', label: 'Qwen QwQ 32B ★', desc: 'Paid · strong reasoning model' },
+  { value: 'moonshotai/kimi-k2-instruct', label: 'Kimi K2 ★', desc: 'Paid · agentic & tool use' },
+];
+
+const CLAUDE_MODELS = [
+  // ── Claude 4.x ──
+  { value: 'claude-haiku-3-5', label: 'Claude Haiku 3.5', desc: 'Cheapest · fastest response' },
+  { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5', desc: 'Balanced · recommended' },
+  { value: 'claude-opus-4-5', label: 'Claude Opus 4.5 ★', desc: 'Most capable 4.5 · highest cost' },
+  // ── Claude 4 stable ──
+  { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4 ★', desc: 'Latest stable Sonnet 4' },
+  { value: 'claude-opus-4-20250514', label: 'Claude Opus 4 ★', desc: 'Latest stable Opus 4 · top quality' },
+  // ── Claude 3.x (lower cost) ──
+  { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet', desc: 'Previous gen · widely available' },
+  { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku', desc: 'Previous gen · very fast & cheap' },
+  { value: 'claude-3-7-sonnet-20250219', label: 'Claude 3.7 Sonnet ★', desc: 'Extended thinking support' },
 ];
 
 const STT_OPTIONS: { value: STTMode; label: string; desc: string }[] = [
@@ -51,6 +77,7 @@ const STT_OPTIONS: { value: STTMode; label: string; desc: string }[] = [
 const LLM_PROVIDERS: { value: LLMProvider; label: string; desc: string }[] = [
   { value: 'gemini', label: 'Gemini', desc: '1,500 req/day free' },
   { value: 'groq', label: 'Groq', desc: '14,400 req/day free' },
+  { value: 'claude', label: 'Claude', desc: 'Anthropic · pay-per-use' },
 ];
 
 const WEB_SEARCH_PROVIDERS: { value: WebSearchProvider; label: string; desc: string }[] = [
@@ -189,8 +216,10 @@ export function SettingsScreen() {
   const [activeProvider, setActiveProviderState] = useState<LLMProvider>('gemini');
   const [geminiKey, setGeminiKeyState] = useState('');
   const [groqKey, setGroqKeyState] = useState('');
+  const [claudeKey, setClaudeKeyState] = useState('');
   const [geminiModel, setGeminiModelState] = useState('gemini-2.0-flash');
   const [groqModel, setGroqModelState] = useState('llama-3.3-70b-versatile');
+  const [claudeModel, setClaudeModelState] = useState('claude-sonnet-4-5');
 
   // Web search state
   const [webSearchProvider, setWebSearchProviderState] = useState<WebSearchProvider>('tavily');
@@ -210,9 +239,11 @@ export function SettingsScreen() {
       const stored = await loadStoredKeys();
       if (stored.geminiKey) setGeminiKeyState(stored.geminiKey);
       if (stored.groqKey) setGroqKeyState(stored.groqKey);
+      if (stored.claudeKey) setClaudeKeyState(stored.claudeKey);
       setActiveProviderState(stored.activeProvider);
       setGeminiModelState(stored.geminiModel);
       setGroqModelState(stored.groqModel);
+      setClaudeModelState(stored.claudeModel);
 
       const { tavilyKey: tk, braveKey: bk, provider: wsp } = await loadStoredWebSearchKeys();
       if (tk) setTavilyKeyState(tk);
@@ -229,7 +260,8 @@ export function SettingsScreen() {
   const handleSelectProvider = useCallback(async (p: LLMProvider) => {
     setActiveProviderState(p);
     await saveActiveProvider(p);
-    setSnack(`Switched to ${p === 'gemini' ? 'Gemini' : 'Groq'}.`);
+    const label = LLM_PROVIDERS.find(x => x.value === p)?.label ?? p;
+    setSnack(`Switched to ${label}.`);
   }, []);
 
   const handleSelectGeminiModel = useCallback(async (m: string) => {
@@ -259,6 +291,20 @@ export function SettingsScreen() {
     setGroqKeyState(key);
     setSnack('Groq API key saved.');
   }, [keyDraft]);
+
+  const handleSaveClaudeKey = useCallback(async () => {
+    const key = keyDraft.trim();
+    if (!key) return;
+    await saveClaudeKey(key);
+    setClaudeKeyState(key);
+    setSnack('Claude API key saved.');
+  }, [keyDraft]);
+
+  const handleSelectClaudeModel = useCallback(async (m: string) => {
+    setClaudeModelState(m);
+    await saveClaudeModelPref(m);
+    setSnack('Claude model updated.');
+  }, []);
 
   const handleSaveTavilyKey = useCallback(async () => {
     const key = keyDraft.trim();
@@ -300,6 +346,7 @@ export function SettingsScreen() {
   const maskKey = (k: string) => k ? `••••••••${k.slice(-4)}` : 'Not set';
   const geminiModelLabel = GEMINI_MODELS.find(m => m.value === geminiModel)?.label ?? geminiModel;
   const groqModelLabel = GROQ_MODELS.find(m => m.value === groqModel)?.label ?? groqModel;
+  const claudeModelLabel = CLAUDE_MODELS.find(m => m.value === claudeModel)?.label ?? claudeModel;
   const webSearchLabel = WEB_SEARCH_PROVIDERS.find(p => p.value === webSearchProvider)?.label ?? webSearchProvider;
   const agentModeLabel = AGENT_MODES.find(m => m.value === agentMode)?.label ?? agentMode;
   const sttLabel = STT_OPTIONS.find(m => m.value === sttMode)?.label ?? sttMode;
@@ -376,7 +423,7 @@ export function SettingsScreen() {
                 onPress={() => setOpenModal('gemini_model')}
               />
             </>
-          ) : (
+          ) : activeProvider === 'groq' ? (
             <>
               <SettingRow
                 icon="key-outline"
@@ -390,6 +437,22 @@ export function SettingsScreen() {
                 label="Groq Model"
                 value={groqModelLabel}
                 onPress={() => setOpenModal('groq_model')}
+              />
+            </>
+          ) : (
+            <>
+              <SettingRow
+                icon="key-outline"
+                label="Claude API Key"
+                value={maskKey(claudeKey)}
+                onPress={() => openKeyModal('claude_key', claudeKey)}
+              />
+              <View style={styles.cardDivider} />
+              <SettingRow
+                icon="chip"
+                label="Claude Model"
+                value={claudeModelLabel}
+                onPress={() => setOpenModal('claude_model')}
               />
             </>
           )}
@@ -516,6 +579,14 @@ export function SettingsScreen() {
         onClose={() => setOpenModal(null)}
       />
       <PickerModal
+        visible={openModal === 'claude_model'}
+        title="Claude Model"
+        options={CLAUDE_MODELS}
+        selected={claudeModel}
+        onSelect={handleSelectClaudeModel}
+        onClose={() => setOpenModal(null)}
+      />
+      <PickerModal
         visible={openModal === 'web_search_provider'}
         title="Web Search Provider"
         options={WEB_SEARCH_PROVIDERS}
@@ -557,6 +628,15 @@ export function SettingsScreen() {
         value={keyDraft}
         onChange={setKeyDraft}
         onSave={handleSaveGroqKey}
+        onClose={() => setOpenModal(null)}
+      />
+      <KeyModal
+        visible={openModal === 'claude_key'}
+        title="Claude API Key"
+        placeholder="sk-ant-..."
+        value={keyDraft}
+        onChange={setKeyDraft}
+        onSave={handleSaveClaudeKey}
         onClose={() => setOpenModal(null)}
       />
       <KeyModal

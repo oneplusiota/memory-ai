@@ -52,7 +52,7 @@ export type ConversationResponse = {
 
 export type STTMode = 'native' | 'gemini-audio' | 'native-corrected';
 
-export type LLMProvider = 'gemini' | 'groq';
+export type LLMProvider = 'gemini' | 'groq' | 'claude';
 
 export type ConversationMode = 'journal' | 'coach' | 'analyst' | 'devil' | 'tool_builder';
 
