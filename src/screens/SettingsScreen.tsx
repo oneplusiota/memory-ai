@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Modal, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, Snackbar, Text, TextInput } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -14,7 +14,7 @@ import { indexLinks } from '@/services/indexer/GraphIndexer';
 import { noteTitle } from '@/utils/pathUtils';
 import {
   saveGeminiKey, saveGroqKey, saveActiveProvider,
-  saveGeminiModelPref, loadStoredKeys,
+  saveGeminiModelPref, saveGroqModelPref, loadStoredKeys,
 } from '@/services/gemini/GeminiClient';
 import {
   saveWebSearchProvider, saveTavilyKey, saveBraveKey,
@@ -28,16 +28,42 @@ const AGENT_MODE_KEY = 'agent_mode';
 const STT_MODE_KEY = 'stt_mode';
 
 const GEMINI_MODELS = [
-  { value: 'gemini-2.0-flash', desc: '1,500/day free — recommended' },
-  { value: 'gemini-2.5-flash', desc: '500/day free — most capable' },
-  { value: 'gemini-1.5-flash', desc: '1,500/day free — legacy' },
-] as const;
+  { value: 'gemini-2.0-flash', label: 'gemini-2.0-flash', desc: '1,500/day free · recommended' },
+  { value: 'gemini-2.5-flash', label: 'gemini-2.5-flash', desc: '500/day free · most capable' },
+  { value: 'gemini-1.5-flash', label: 'gemini-1.5-flash', desc: '1,500/day free · legacy' },
+];
+
+const GROQ_MODELS = [
+  { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B Versatile', desc: 'Best quality · recommended' },
+  { value: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B Instant', desc: 'Fastest · low latency' },
+  { value: 'llama3-70b-8192', label: 'Llama 3 70B', desc: 'High quality · 8k context' },
+  { value: 'llama3-8b-8192', label: 'Llama 3 8B', desc: 'Fast · 8k context' },
+  { value: 'mixtral-8x7b-32768', label: 'Mixtral 8x7B', desc: 'Long context · 32k tokens' },
+  { value: 'gemma2-9b-it', label: 'Gemma 2 9B', desc: 'Google · instruction-tuned' },
+];
 
 const STT_OPTIONS: { value: STTMode; label: string; desc: string }[] = [
   { value: 'native', label: 'Native Android STT', desc: 'Fast, free, works offline' },
   { value: 'gemini-audio', label: 'Gemini Audio', desc: 'Best accuracy, needs internet' },
-  { value: 'native-corrected', label: 'Native + AI correction', desc: 'Native speed + Gemini cleanup' },
+  { value: 'native-corrected', label: 'Native + AI correction', desc: 'Native speed + AI cleanup' },
 ];
+
+const LLM_PROVIDERS: { value: LLMProvider; label: string; desc: string }[] = [
+  { value: 'gemini', label: 'Gemini', desc: '1,500 req/day free' },
+  { value: 'groq', label: 'Groq', desc: '14,400 req/day free' },
+];
+
+const WEB_SEARCH_PROVIDERS: { value: WebSearchProvider; label: string; desc: string }[] = [
+  { value: 'tavily', label: 'Tavily', desc: '1,000 searches/mo free · best for AI' },
+  { value: 'brave', label: 'Brave Search', desc: '2,000 searches/mo free' },
+];
+
+const AGENT_MODES: { value: AgentMode; label: string; desc: string }[] = [
+  { value: 'agentic', label: 'Agentic loop', desc: 'AI calls tools in sequence until done' },
+  { value: 'single', label: 'Single call', desc: 'One round of tool calls, then stops' },
+];
+
+// ── Reusable UI components ─────────────────────────────────────────────────
 
 function SectionHeader({ title }: { title: string }) {
   return <Text style={styles.sectionHeader}>{title}</Text>;
@@ -47,27 +73,108 @@ function Divider() {
   return <View style={styles.divider} />;
 }
 
-function RadioRow({
+function SettingRow({
+  icon,
   label,
-  desc,
-  selected,
+  value,
   onPress,
+  danger,
 }: {
+  icon: string;
   label: string;
-  desc: string;
-  selected: boolean;
+  value?: string;
   onPress: () => void;
+  danger?: boolean;
 }) {
   return (
-    <TouchableOpacity style={styles.radioRow} onPress={onPress} activeOpacity={0.7}>
-      <View style={[styles.radioCircle, selected && styles.radioCircleSelected]}>
-        {selected && <View style={styles.radioInner} />}
+    <TouchableOpacity style={styles.settingRow} onPress={onPress} activeOpacity={0.65}>
+      <View style={[styles.settingIconWrap, danger && styles.settingIconWrapDanger]}>
+        <MaterialCommunityIcons name={icon as any} size={18} color={danger ? '#EF4444' : '#6D28D9'} />
       </View>
-      <View style={styles.radioContent}>
-        <Text style={[styles.radioLabel, selected && styles.radioLabelSelected]}>{label}</Text>
-        <Text style={styles.radioDesc}>{desc}</Text>
+      <View style={styles.settingContent}>
+        <Text style={[styles.settingLabel, danger && styles.settingLabelDanger]}>{label}</Text>
+        {value ? <Text style={styles.settingValue} numberOfLines={1}>{value}</Text> : null}
       </View>
+      <MaterialCommunityIcons name="chevron-right" size={18} color="#D1D5DB" />
     </TouchableOpacity>
+  );
+}
+
+function PickerModal<T extends string>({
+  visible, title, options, selected, onSelect, onClose,
+}: {
+  visible: boolean;
+  title: string;
+  options: { value: T; label: string; desc: string }[];
+  selected: T;
+  onSelect: (v: T) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={onClose} />
+      <View style={styles.modalSheet}>
+        <View style={styles.modalHandle} />
+        <Text style={styles.modalTitle}>{title}</Text>
+        {options.map((opt) => {
+          const active = selected === opt.value;
+          return (
+            <TouchableOpacity
+              key={opt.value}
+              style={styles.optionRow}
+              onPress={() => { onSelect(opt.value); onClose(); }}
+              activeOpacity={0.7}
+            >
+              <View style={styles.optionText}>
+                <Text style={[styles.optionLabel, active && styles.optionLabelActive]}>{opt.label}</Text>
+                <Text style={styles.optionDesc}>{opt.desc}</Text>
+              </View>
+              {active && <MaterialCommunityIcons name="check-circle" size={20} color="#6D28D9" />}
+            </TouchableOpacity>
+          );
+        })}
+        <TouchableOpacity style={styles.modalCancel} onPress={onClose}>
+          <Text style={styles.modalCancelText}>Cancel</Text>
+        </TouchableOpacity>
+      </View>
+    </Modal>
+  );
+}
+
+function KeyModal({
+  visible, title, placeholder, value, onChange, onSave, onClose,
+}: {
+  visible: boolean;
+  title: string;
+  placeholder: string;
+  value: string;
+  onChange: (t: string) => void;
+  onSave: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={onClose} />
+      <View style={styles.modalSheet}>
+        <View style={styles.modalHandle} />
+        <Text style={styles.modalTitle}>{title}</Text>
+        <TextInput
+          mode="outlined"
+          label={placeholder}
+          value={value}
+          onChangeText={onChange}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={styles.keyModalInput}
+          dense
+        />
+        <View style={styles.keyModalActions}>
+          <Button mode="text" onPress={onClose} style={styles.keyModalBtn}>Cancel</Button>
+          <Button mode="contained" onPress={() => { onSave(); onClose(); }} style={styles.keyModalBtn}>Save</Button>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -78,59 +185,46 @@ export function SettingsScreen() {
   const [noteCount, setNoteCount] = useState(0);
   const [snack, setSnack] = useState('');
 
+  // LLM state
   const [activeProvider, setActiveProviderState] = useState<LLMProvider>('gemini');
-  const [geminiKeyInput, setGeminiKeyInput] = useState('');
-  const [geminiKeySaved, setGeminiKeySaved] = useState(false);
-  const [groqKeyInput, setGroqKeyInput] = useState('');
-  const [groqKeySaved, setGroqKeySaved] = useState(false);
+  const [geminiKey, setGeminiKeyState] = useState('');
+  const [groqKey, setGroqKeyState] = useState('');
   const [geminiModel, setGeminiModelState] = useState('gemini-2.0-flash');
+  const [groqModel, setGroqModelState] = useState('llama-3.3-70b-versatile');
 
   // Web search state
   const [webSearchProvider, setWebSearchProviderState] = useState<WebSearchProvider>('tavily');
-  const [tavilyKeyInput, setTavilyKeyInput] = useState('');
-  const [tavilyKeySaved, setTavilyKeySaved] = useState(false);
-  const [braveKeyInput, setBraveKeyInput] = useState('');
-  const [braveKeySaved, setBraveKeySaved] = useState(false);
+  const [tavilyKey, setTavilyKeyState] = useState('');
+  const [braveKey, setBraveKeyState] = useState('');
 
-  // Agent mode state
+  // Agent / STT state
   const [agentMode, setAgentModeState] = useState<AgentMode>('agentic');
   const [sttMode, setSttModeState] = useState<STTMode>('native');
 
+  // Modal state — one open at a time
+  const [openModal, setOpenModal] = useState<string | null>(null);
+  const [keyDraft, setKeyDraft] = useState('');
+
   useEffect(() => {
     (async () => {
-      const { geminiKey, groqKey, activeProvider: ap, geminiModel: gm } = await loadStoredKeys();
-      if (geminiKey) { setGeminiKeyInput(geminiKey); setGeminiKeySaved(true); }
-      if (groqKey) { setGroqKeyInput(groqKey); setGroqKeySaved(true); }
-      setActiveProviderState(ap);
-      setGeminiModelState(gm);
-      const mode = await SecureStore.getItemAsync(STT_MODE_KEY);
-      if (mode) setSttModeState(mode as STTMode);
+      const stored = await loadStoredKeys();
+      if (stored.geminiKey) setGeminiKeyState(stored.geminiKey);
+      if (stored.groqKey) setGroqKeyState(stored.groqKey);
+      setActiveProviderState(stored.activeProvider);
+      setGeminiModelState(stored.geminiModel);
+      setGroqModelState(stored.groqModel);
 
-      // Load web search + agent settings
-      const { tavilyKey, braveKey, provider: wsp } = await loadStoredWebSearchKeys();
-      if (tavilyKey) { setTavilyKeyInput(tavilyKey); setTavilyKeySaved(true); }
-      if (braveKey) { setBraveKeyInput(braveKey); setBraveKeySaved(true); }
+      const { tavilyKey: tk, braveKey: bk, provider: wsp } = await loadStoredWebSearchKeys();
+      if (tk) setTavilyKeyState(tk);
+      if (bk) setBraveKeyState(bk);
       setWebSearchProviderState(wsp);
+
       const am = await SecureStore.getItemAsync(AGENT_MODE_KEY);
       if (am) setAgentModeState(am as AgentMode);
+      const sm = await SecureStore.getItemAsync(STT_MODE_KEY);
+      if (sm) setSttModeState(sm as STTMode);
     })();
   }, []);
-
-  const handleSaveGeminiKey = useCallback(async () => {
-    const key = geminiKeyInput.trim();
-    if (!key) return;
-    await saveGeminiKey(key);
-    setGeminiKeySaved(true);
-    setSnack('Gemini API key saved.');
-  }, [geminiKeyInput]);
-
-  const handleSaveGroqKey = useCallback(async () => {
-    const key = groqKeyInput.trim();
-    if (!key) return;
-    await saveGroqKey(key);
-    setGroqKeySaved(true);
-    setSnack('Groq API key saved.');
-  }, [groqKeyInput]);
 
   const handleSelectProvider = useCallback(async (p: LLMProvider) => {
     setActiveProviderState(p);
@@ -141,30 +235,48 @@ export function SettingsScreen() {
   const handleSelectGeminiModel = useCallback(async (m: string) => {
     setGeminiModelState(m);
     await saveGeminiModelPref(m);
+    setSnack('Gemini model updated.');
   }, []);
 
-  const changeSttMode = useCallback(async (mode: STTMode) => {
-    setSttModeState(mode);
-    await SecureStore.setItemAsync(STT_MODE_KEY, mode);
+  const handleSelectGroqModel = useCallback(async (m: string) => {
+    setGroqModelState(m);
+    await saveGroqModelPref(m);
+    setSnack('Groq model updated.');
   }, []);
+
+  const handleSaveGeminiKey = useCallback(async () => {
+    const key = keyDraft.trim();
+    if (!key) return;
+    await saveGeminiKey(key);
+    setGeminiKeyState(key);
+    setSnack('Gemini API key saved.');
+  }, [keyDraft]);
+
+  const handleSaveGroqKey = useCallback(async () => {
+    const key = keyDraft.trim();
+    if (!key) return;
+    await saveGroqKey(key);
+    setGroqKeyState(key);
+    setSnack('Groq API key saved.');
+  }, [keyDraft]);
 
   const handleSaveTavilyKey = useCallback(async () => {
-    const key = tavilyKeyInput.trim();
+    const key = keyDraft.trim();
     if (!key) return;
     await saveTavilyKey(key);
-    setTavilyKeySaved(true);
+    setTavilyKeyState(key);
     setSnack('Tavily API key saved.');
-  }, [tavilyKeyInput]);
+  }, [keyDraft]);
 
   const handleSaveBraveKey = useCallback(async () => {
-    const key = braveKeyInput.trim();
+    const key = keyDraft.trim();
     if (!key) return;
     await saveBraveKey(key);
-    setBraveKeySaved(true);
+    setBraveKeyState(key);
     setSnack('Brave Search API key saved.');
-  }, [braveKeyInput]);
+  }, [keyDraft]);
 
-  const handleSelectWebSearchProvider = useCallback(async (p: WebSearchProvider) => {
+  const handleSelectWebSearch = useCallback(async (p: WebSearchProvider) => {
     setWebSearchProviderState(p);
     await saveWebSearchProvider(p);
     setSnack(`Web search set to ${p === 'tavily' ? 'Tavily' : 'Brave'}.`);
@@ -174,6 +286,24 @@ export function SettingsScreen() {
     setAgentModeState(m);
     await SecureStore.setItemAsync(AGENT_MODE_KEY, m);
   }, []);
+
+  const handleSelectSttMode = useCallback(async (m: STTMode) => {
+    setSttModeState(m);
+    await SecureStore.setItemAsync(STT_MODE_KEY, m);
+  }, []);
+
+  const openKeyModal = (id: string, currentValue: string) => {
+    setKeyDraft(currentValue);
+    setOpenModal(id);
+  };
+
+  const maskKey = (k: string) => k ? `••••••••${k.slice(-4)}` : 'Not set';
+  const geminiModelLabel = GEMINI_MODELS.find(m => m.value === geminiModel)?.label ?? geminiModel;
+  const groqModelLabel = GROQ_MODELS.find(m => m.value === groqModel)?.label ?? groqModel;
+  const webSearchLabel = WEB_SEARCH_PROVIDERS.find(p => p.value === webSearchProvider)?.label ?? webSearchProvider;
+  const agentModeLabel = AGENT_MODES.find(m => m.value === agentMode)?.label ?? agentMode;
+  const sttLabel = STT_OPTIONS.find(m => m.value === sttMode)?.label ?? sttMode;
+  const providerLabel = LLM_PROVIDERS.find(p => p.value === activeProvider)?.label ?? activeProvider;
 
   const rebuildIndex = useCallback(async (uri: string) => {
     setIndexing(true);
@@ -212,326 +342,342 @@ export function SettingsScreen() {
   }, [pickVault, rebuildIndex]);
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text variant="headlineSmall" style={styles.heading}>Settings</Text>
+    <View style={styles.root}>
+      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+        <Text variant="headlineSmall" style={styles.heading}>Settings</Text>
 
-      {/* ── AI MODEL ── */}
-      <SectionHeader title="AI MODEL" />
+        {/* ── AI MODEL ── */}
+        <SectionHeader title="AI MODEL" />
+        <View style={styles.card}>
+          <SettingRow
+            icon="swap-horizontal"
+            label="Provider"
+            value={providerLabel}
+            onPress={() => setOpenModal('provider')}
+          />
+          <View style={styles.cardDivider} />
+          {activeProvider === 'gemini' ? (
+            <>
+              <SettingRow
+                icon="key-outline"
+                label="Gemini API Key"
+                value={maskKey(geminiKey)}
+                onPress={() => openKeyModal('gemini_key', geminiKey)}
+              />
+              <View style={styles.cardDivider} />
+              <SettingRow
+                icon="chip"
+                label="Gemini Model"
+                value={geminiModelLabel}
+                onPress={() => setOpenModal('gemini_model')}
+              />
+            </>
+          ) : (
+            <>
+              <SettingRow
+                icon="key-outline"
+                label="Groq API Key"
+                value={maskKey(groqKey)}
+                onPress={() => openKeyModal('groq_key', groqKey)}
+              />
+              <View style={styles.cardDivider} />
+              <SettingRow
+                icon="chip"
+                label="Groq Model"
+                value={groqModelLabel}
+                onPress={() => setOpenModal('groq_model')}
+              />
+            </>
+          )}
+        </View>
 
-      <View style={styles.providerRow}>
-        {(['gemini', 'groq'] as LLMProvider[]).map((p) => (
-          <TouchableOpacity
-            key={p}
-            style={[styles.providerTab, activeProvider === p && styles.providerTabActive]}
-            onPress={() => handleSelectProvider(p)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.providerTabText, activeProvider === p && styles.providerTabTextActive]}>
-              {p === 'gemini' ? 'Gemini' : 'Groq'}
-            </Text>
-            <Text style={[styles.providerTabDesc, activeProvider === p && styles.providerTabDescActive]}>
-              {p === 'gemini' ? '1,500 req/day free' : '14,400 req/day free'}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+        <Divider />
 
-      <View style={styles.keyRow}>
-        <TextInput
-          mode="outlined"
-          label="Gemini API Key"
-          value={geminiKeyInput}
-          onChangeText={(t) => { setGeminiKeyInput(t); setGeminiKeySaved(false); }}
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-          style={styles.keyInput}
-          dense
-        />
-        <Button
-          mode="contained"
-          onPress={handleSaveGeminiKey}
-          disabled={!geminiKeyInput.trim() || geminiKeySaved}
-          style={styles.keyBtn}
-          compact
-        >
-          {geminiKeySaved ? '✓' : 'Save'}
-        </Button>
-      </View>
-
-      <View style={styles.keyRow}>
-        <TextInput
-          mode="outlined"
-          label="Groq API Key"
-          value={groqKeyInput}
-          onChangeText={(t) => { setGroqKeyInput(t); setGroqKeySaved(false); }}
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-          style={styles.keyInput}
-          dense
-        />
-        <Button
-          mode="contained"
-          onPress={handleSaveGroqKey}
-          disabled={!groqKeyInput.trim() || groqKeySaved}
-          style={styles.keyBtn}
-          compact
-        >
-          {groqKeySaved ? '✓' : 'Save'}
-        </Button>
-      </View>
-
-      {activeProvider === 'gemini' && (
-        <View style={styles.modelSection}>
-          <Text style={styles.subLabel}>Gemini model</Text>
-          {GEMINI_MODELS.map((m) => (
-            <RadioRow
-              key={m.value}
-              label={m.value}
-              desc={m.desc}
-              selected={geminiModel === m.value}
-              onPress={() => handleSelectGeminiModel(m.value)}
+        {/* ── WEB SEARCH ── */}
+        <SectionHeader title="WEB SEARCH" />
+        <View style={styles.card}>
+          <SettingRow
+            icon="magnify"
+            label="Search Provider"
+            value={webSearchLabel}
+            onPress={() => setOpenModal('web_search_provider')}
+          />
+          <View style={styles.cardDivider} />
+          {webSearchProvider === 'tavily' ? (
+            <SettingRow
+              icon="key-outline"
+              label="Tavily API Key"
+              value={maskKey(tavilyKey)}
+              onPress={() => openKeyModal('tavily_key', tavilyKey)}
             />
-          ))}
+          ) : (
+            <SettingRow
+              icon="key-outline"
+              label="Brave Search API Key"
+              value={maskKey(braveKey)}
+              onPress={() => openKeyModal('brave_key', braveKey)}
+            />
+          )}
         </View>
-      )}
 
-      <Divider />
+        <Divider />
 
-      {/* ── VOICE ── */}
-      <SectionHeader title="VOICE" />
-      {STT_OPTIONS.map((opt) => (
-        <RadioRow
-          key={opt.value}
-          label={opt.label}
-          desc={opt.desc}
-          selected={sttMode === opt.value}
-          onPress={() => changeSttMode(opt.value)}
-        />
-      ))}
-
-      <Divider />
-
-      {/* ── WEB SEARCH ── */}
-      <SectionHeader title="WEB SEARCH" />
-
-      <View style={styles.providerRow}>
-        {(['tavily', 'brave'] as WebSearchProvider[]).map((p) => (
-          <TouchableOpacity
-            key={p}
-            style={[styles.providerTab, webSearchProvider === p && styles.providerTabActive]}
-            onPress={() => handleSelectWebSearchProvider(p)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.providerTabText, webSearchProvider === p && styles.providerTabTextActive]}>
-              {p === 'tavily' ? 'Tavily' : 'Brave'}
-            </Text>
-            <Text style={[styles.providerTabDesc, webSearchProvider === p && styles.providerTabDescActive]}>
-              {p === 'tavily' ? '1,000 req/mo free' : '2,000 req/mo free'}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {webSearchProvider === 'tavily' && (
-        <View style={styles.keyRow}>
-          <TextInput
-            mode="outlined"
-            label="Tavily API Key"
-            value={tavilyKeyInput}
-            onChangeText={(t) => { setTavilyKeyInput(t); setTavilyKeySaved(false); }}
-            secureTextEntry
-            autoCapitalize="none"
-            autoCorrect={false}
-            style={styles.keyInput}
-            dense
+        {/* ── AGENT MODE ── */}
+        <SectionHeader title="AGENT MODE" />
+        <View style={styles.card}>
+          <SettingRow
+            icon="robot-outline"
+            label="Execution Mode"
+            value={agentModeLabel}
+            onPress={() => setOpenModal('agent_mode')}
           />
-          <Button
-            mode="contained"
-            onPress={handleSaveTavilyKey}
-            disabled={!tavilyKeyInput.trim() || tavilyKeySaved}
-            style={styles.keyBtn}
-            compact
-          >
-            {tavilyKeySaved ? '✓' : 'Save'}
-          </Button>
         </View>
-      )}
 
-      {webSearchProvider === 'brave' && (
-        <View style={styles.keyRow}>
-          <TextInput
-            mode="outlined"
-            label="Brave Search API Key"
-            value={braveKeyInput}
-            onChangeText={(t) => { setBraveKeyInput(t); setBraveKeySaved(false); }}
-            secureTextEntry
-            autoCapitalize="none"
-            autoCorrect={false}
-            style={styles.keyInput}
-            dense
+        <Divider />
+
+        {/* ── VOICE ── */}
+        <SectionHeader title="VOICE" />
+        <View style={styles.card}>
+          <SettingRow
+            icon="microphone-outline"
+            label="Speech-to-Text Mode"
+            value={sttLabel}
+            onPress={() => setOpenModal('stt_mode')}
           />
-          <Button
-            mode="contained"
-            onPress={handleSaveBraveKey}
-            disabled={!braveKeyInput.trim() || braveKeySaved}
-            style={styles.keyBtn}
-            compact
-          >
-            {braveKeySaved ? '✓' : 'Save'}
-          </Button>
         </View>
-      )}
 
-      <Divider />
+        <Divider />
 
-      {/* ── AGENT MODE ── */}
-      <SectionHeader title="AGENT MODE" />
-      <RadioRow
-        label="Agentic loop"
-        desc="AI calls tools in sequence until it has a full answer"
-        selected={agentMode === 'agentic'}
-        onPress={() => handleSelectAgentMode('agentic')}
+        {/* ── VAULT ── */}
+        <SectionHeader title="VAULT" />
+        <View style={styles.card}>
+          {vaultUri ? (
+            <>
+              <SettingRow
+                icon="folder-refresh-outline"
+                label="Re-index Vault"
+                value={noteCount > 0 ? `${noteCount} notes` : (indexing ? 'Indexing…' : undefined)}
+                onPress={() => rebuildIndex(vaultUri)}
+              />
+              <View style={styles.cardDivider} />
+              <SettingRow
+                icon="link-off"
+                label="Disconnect Vault"
+                danger
+                onPress={async () => {
+                  await clearVault();
+                  await clearIndex();
+                  setNoteCount(0);
+                  setSnack('Vault disconnected.');
+                }}
+              />
+            </>
+          ) : (
+            <SettingRow
+              icon="folder-open-outline"
+              label="Connect Vault Folder"
+              onPress={handlePickVault}
+            />
+          )}
+        </View>
+
+        <Divider />
+
+        {/* ── ACCOUNT ── */}
+        <SectionHeader title="ACCOUNT" />
+        <View style={styles.card}>
+          {authState === 'signed-in' ? (
+            <>
+              <View style={styles.accountRow}>
+                <View style={styles.settingIconWrap}>
+                  <MaterialCommunityIcons name="account-circle-outline" size={18} color="#6D28D9" />
+                </View>
+                <View style={styles.settingContent}>
+                  <Text style={styles.settingLabel}>{userEmail}</Text>
+                  <Text style={styles.settingValue}>Google account · signed in</Text>
+                </View>
+              </View>
+              <View style={styles.cardDivider} />
+              <SettingRow icon="logout" label="Sign Out" danger onPress={signOut} />
+            </>
+          ) : (
+            <SettingRow icon="google" label="Sign in with Google" onPress={signIn} />
+          )}
+        </View>
+
+        <View style={styles.bottomPad} />
+      </ScrollView>
+
+      {/* ── Picker modals ── */}
+      <PickerModal
+        visible={openModal === 'provider'}
+        title="AI Provider"
+        options={LLM_PROVIDERS}
+        selected={activeProvider}
+        onSelect={handleSelectProvider}
+        onClose={() => setOpenModal(null)}
       />
-      <RadioRow
-        label="Single call"
-        desc="AI calls one round of tools, then shows partial results"
-        selected={agentMode === 'single'}
-        onPress={() => handleSelectAgentMode('single')}
+      <PickerModal
+        visible={openModal === 'gemini_model'}
+        title="Gemini Model"
+        options={GEMINI_MODELS}
+        selected={geminiModel}
+        onSelect={handleSelectGeminiModel}
+        onClose={() => setOpenModal(null)}
+      />
+      <PickerModal
+        visible={openModal === 'groq_model'}
+        title="Groq Model"
+        options={GROQ_MODELS}
+        selected={groqModel}
+        onSelect={handleSelectGroqModel}
+        onClose={() => setOpenModal(null)}
+      />
+      <PickerModal
+        visible={openModal === 'web_search_provider'}
+        title="Web Search Provider"
+        options={WEB_SEARCH_PROVIDERS}
+        selected={webSearchProvider}
+        onSelect={handleSelectWebSearch}
+        onClose={() => setOpenModal(null)}
+      />
+      <PickerModal
+        visible={openModal === 'agent_mode'}
+        title="Agent Execution Mode"
+        options={AGENT_MODES}
+        selected={agentMode}
+        onSelect={handleSelectAgentMode}
+        onClose={() => setOpenModal(null)}
+      />
+      <PickerModal
+        visible={openModal === 'stt_mode'}
+        title="Speech-to-Text Mode"
+        options={STT_OPTIONS}
+        selected={sttMode}
+        onSelect={handleSelectSttMode}
+        onClose={() => setOpenModal(null)}
       />
 
-      <Divider />
-
-      {/* ── VAULT ── */}
-      <SectionHeader title="VAULT" />
-      {vaultUri ? (
-        <View style={styles.vaultBlock}>
-          <Text style={styles.vaultUri} numberOfLines={2}>{vaultUri}</Text>
-          {noteCount > 0 && <Text style={styles.vaultCount}>{noteCount} notes indexed</Text>}
-          <View style={styles.vaultActions}>
-            <Button
-              mode="outlined"
-              onPress={() => rebuildIndex(vaultUri)}
-              loading={indexing}
-              disabled={indexing}
-              style={styles.vaultBtn}
-              icon="refresh"
-              compact
-            >
-              Re-index
-            </Button>
-            <Button
-              mode="outlined"
-              onPress={async () => { await clearVault(); await clearIndex(); setNoteCount(0); }}
-              style={[styles.vaultBtn, styles.disconnectBtn]}
-              icon="link-off"
-              compact
-            >
-              Disconnect
-            </Button>
-          </View>
-        </View>
-      ) : (
-        <Button mode="contained" onPress={handlePickVault} icon="folder-open" style={styles.pickBtn}>
-          Pick Vault Folder
-        </Button>
-      )}
-
-      <Divider />
-
-      {/* ── ACCOUNT ── */}
-      <SectionHeader title="ACCOUNT" />
-      {authState === 'signed-in' ? (
-        <View style={styles.accountRow}>
-          <MaterialCommunityIcons name="account-circle" size={32} color="#6D28D9" />
-          <View style={styles.accountInfo}>
-            <Text style={styles.accountEmail}>{userEmail}</Text>
-            <Text style={styles.accountDesc}>Google account</Text>
-          </View>
-          <Button mode="text" onPress={signOut} compact>Sign Out</Button>
-        </View>
-      ) : (
-        <Button mode="outlined" onPress={signIn} icon="google" style={styles.signInBtn}>
-          Sign in with Google
-        </Button>
-      )}
-
-      <View style={styles.bottomPad} />
+      {/* ── Key entry modals ── */}
+      <KeyModal
+        visible={openModal === 'gemini_key'}
+        title="Gemini API Key"
+        placeholder="AIza..."
+        value={keyDraft}
+        onChange={setKeyDraft}
+        onSave={handleSaveGeminiKey}
+        onClose={() => setOpenModal(null)}
+      />
+      <KeyModal
+        visible={openModal === 'groq_key'}
+        title="Groq API Key"
+        placeholder="gsk_..."
+        value={keyDraft}
+        onChange={setKeyDraft}
+        onSave={handleSaveGroqKey}
+        onClose={() => setOpenModal(null)}
+      />
+      <KeyModal
+        visible={openModal === 'tavily_key'}
+        title="Tavily API Key"
+        placeholder="tvly-..."
+        value={keyDraft}
+        onChange={setKeyDraft}
+        onSave={handleSaveTavilyKey}
+        onClose={() => setOpenModal(null)}
+      />
+      <KeyModal
+        visible={openModal === 'brave_key'}
+        title="Brave Search API Key"
+        placeholder="BSA..."
+        value={keyDraft}
+        onChange={setKeyDraft}
+        onSave={handleSaveBraveKey}
+        onClose={() => setOpenModal(null)}
+      />
 
       <Snackbar visible={!!snack} onDismiss={() => setSnack('')} duration={3000}>
         {snack}
       </Snackbar>
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { paddingHorizontal: 20, paddingTop: 60, paddingBottom: 40 },
+  root: { flex: 1, backgroundColor: '#F3F4F6' },
+  container: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 40 },
   heading: { fontWeight: 'bold', marginBottom: 20, color: '#111827' },
 
   sectionHeader: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1,
-    color: '#9CA3AF',
-    textTransform: 'uppercase',
-    marginBottom: 12,
-    marginTop: 4,
+    fontSize: 11, fontWeight: '700', letterSpacing: 1,
+    color: '#6B7280', textTransform: 'uppercase',
+    marginBottom: 8, marginTop: 4, paddingLeft: 4,
   },
-  divider: { height: StyleSheet.hairlineWidth, backgroundColor: '#F3F4F6', marginVertical: 20 },
+  divider: { height: 20 },
 
-  // Provider toggle
-  providerRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
-  providerTab: {
-    flex: 1, borderRadius: 10, borderWidth: 1.5, borderColor: '#E5E7EB',
-    backgroundColor: '#F9FAFB', padding: 12, alignItems: 'center',
+  card: {
+    backgroundColor: '#FFFFFF', borderRadius: 12, overflow: 'hidden',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06, shadowRadius: 4, elevation: 2,
   },
-  providerTabActive: { backgroundColor: '#6D28D9', borderColor: '#6D28D9' },
-  providerTabText: { fontSize: 14, fontWeight: '600', color: '#374151' },
-  providerTabTextActive: { color: '#FFFFFF' },
-  providerTabDesc: { fontSize: 11, color: '#9CA3AF', marginTop: 2 },
-  providerTabDescActive: { color: '#EDE9FE' },
+  cardDivider: { height: StyleSheet.hairlineWidth, backgroundColor: '#F3F4F6', marginLeft: 54 },
 
-  // API key rows
-  keyRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
-  keyInput: { flex: 1, backgroundColor: '#FFFFFF' },
-  keyBtn: { alignSelf: 'center' },
-
-  // Gemini model
-  modelSection: { marginTop: 8 },
-  subLabel: { fontSize: 12, color: '#6B7280', marginBottom: 8 },
-
-  // Radio rows
-  radioRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 9, gap: 12 },
-  radioCircle: {
-    width: 18, height: 18, borderRadius: 9,
-    borderWidth: 2, borderColor: '#D1D5DB',
-    alignItems: 'center', justifyContent: 'center',
-    flexShrink: 0,
+  settingRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 14, paddingVertical: 13, gap: 12,
   },
-  radioCircleSelected: { borderColor: '#6D28D9' },
-  radioInner: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#6D28D9' },
-  radioContent: { flex: 1 },
-  radioLabel: { fontSize: 14, color: '#374151', fontWeight: '500' },
-  radioLabelSelected: { color: '#6D28D9' },
-  radioDesc: { fontSize: 12, color: '#9CA3AF', marginTop: 1 },
+  settingIconWrap: {
+    width: 32, height: 32, borderRadius: 8,
+    backgroundColor: '#EDE9FE', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+  },
+  settingIconWrapDanger: { backgroundColor: '#FEE2E2' },
+  settingContent: { flex: 1 },
+  settingLabel: { fontSize: 15, color: '#111827', fontWeight: '500' },
+  settingLabelDanger: { color: '#EF4444' },
+  settingValue: { fontSize: 13, color: '#9CA3AF', marginTop: 1 },
 
-  // Vault
-  vaultBlock: { gap: 6 },
-  vaultUri: { fontSize: 12, color: '#9CA3AF', fontFamily: 'monospace' },
-  vaultCount: { fontSize: 13, color: '#374151' },
-  vaultActions: { flexDirection: 'row', gap: 8, marginTop: 4 },
-  vaultBtn: { alignSelf: 'flex-start' },
-  disconnectBtn: { borderColor: '#FCA5A5' },
-  pickBtn: { alignSelf: 'flex-start' },
-
-  // Account
-  accountRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  accountInfo: { flex: 1 },
-  accountEmail: { fontSize: 14, color: '#111827', fontWeight: '500' },
-  accountDesc: { fontSize: 12, color: '#9CA3AF' },
-  signInBtn: { alignSelf: 'flex-start' },
+  accountRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 14, paddingVertical: 13, gap: 12,
+  },
 
   bottomPad: { height: 20 },
+
+  // Modal
+  modalBackdrop: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  modalSheet: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: '#FFFFFF', borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingHorizontal: 20, paddingBottom: 36, paddingTop: 12,
+    shadowColor: '#000', shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.12, shadowRadius: 12, elevation: 16,
+  },
+  modalHandle: {
+    alignSelf: 'center', width: 36, height: 4,
+    borderRadius: 2, backgroundColor: '#D1D5DB', marginBottom: 16,
+  },
+  modalTitle: { fontSize: 17, fontWeight: '700', color: '#111827', marginBottom: 16 },
+
+  optionRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 13,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#F3F4F6',
+  },
+  optionText: { flex: 1 },
+  optionLabel: { fontSize: 15, color: '#374151', fontWeight: '500' },
+  optionLabelActive: { color: '#6D28D9' },
+  optionDesc: { fontSize: 12, color: '#9CA3AF', marginTop: 2 },
+
+  modalCancel: {
+    marginTop: 12, alignItems: 'center', paddingVertical: 12,
+    borderRadius: 10, backgroundColor: '#F3F4F6',
+  },
+  modalCancelText: { fontSize: 15, fontWeight: '600', color: '#374151' },
+
+  keyModalInput: { backgroundColor: '#FFFFFF', marginBottom: 16 },
+  keyModalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8 },
+  keyModalBtn: { minWidth: 80 },
 });

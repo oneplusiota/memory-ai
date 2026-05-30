@@ -25,12 +25,14 @@ let activeProvider: LLMProvider = 'gemini';
 let geminiKey = '';
 let geminiModel = 'gemini-2.0-flash';
 let groqKey = '';
+let groqModel = 'llama-3.3-70b-versatile';
 
 export function setActiveProvider(p: LLMProvider) { activeProvider = p; }
 export function getActiveProvider(): LLMProvider { return activeProvider; }
 export function setGeminiKey(k: string) { geminiKey = k; }
 export function setGeminiModel(m: string) { geminiModel = m; }
 export function setGroqKey(k: string) { groqKey = k; }
+export function setGroqModel(m: string) { groqModel = m; }
 
 // ── Unified chat call ──────────────────────────────────────────────────────
 
@@ -128,7 +130,7 @@ async function callGroq(messages: LLMMessage[], jsonSchemaDescription?: string):
     : messages;
 
   const body: Record<string, unknown> = {
-    model: 'llama-3.3-70b-versatile',
+    model: groqModel,
     messages: finalMessages,
     temperature: 0.2,
   };
@@ -275,7 +277,7 @@ async function callGroqWithTools(
   }
 
   const body = {
-    model: 'llama-3.3-70b-versatile',
+    model: groqModel,
     messages: finalMessages,
     tools: tools.map(toGroqTool),
     tool_choice: 'auto',
