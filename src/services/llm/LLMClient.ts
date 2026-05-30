@@ -1,6 +1,13 @@
 import type { LLMProvider, ToolCall, ToolDefinition, ToolResult } from "@/types";
 
-export type LLMMessage = { role: "system" | "user" | "assistant"; content: string };
+export type LLMMessage = {
+  role: "system" | "user" | "assistant";
+  content: string;
+  /** Populated when this assistant turn represents tool calls (for multi-turn history) */
+  toolCalls?: ToolCall[];
+  /** Populated when this user turn carries tool results (for multi-turn history) */
+  toolResults?: ToolResult[];
+};
 
 export type LLMResponse =
   | { type: "text"; text: string }
@@ -76,7 +83,6 @@ export interface LLMAdapter {
   chatWithTools(
     messages: LLMMessage[],
     tools: ToolDefinition[],
-    toolResults?: ToolResult[],
   ): Promise<LLMResponse>;
 }
 
@@ -104,7 +110,7 @@ let geminiModel = "gemini-2.0-flash";
 let groqKey = "";
 let groqModel = "llama-3.3-70b-versatile";
 let claudeKey = "";
-let claudeModel = "claude-sonnet-4-5";
+let claudeModel = "claude-sonnet-4-6";
 
 export function setActiveProvider(p: LLMProvider) { activeProvider = p; }
 export function getActiveProvider(): LLMProvider { return activeProvider; }
@@ -129,9 +135,8 @@ export async function llmChat(
 export async function llmChatWithTools(
   messages: LLMMessage[],
   tools: ToolDefinition[],
-  toolResults?: ToolResult[],
 ): Promise<LLMResponse> {
-  return LLMAdapterFactory.get(activeProvider).chatWithTools(messages, tools, toolResults);
+  return LLMAdapterFactory.get(activeProvider).chatWithTools(messages, tools);
 }
 
 // ── Gemini adapter ─────────────────────────────────────────────────────────
@@ -194,26 +199,32 @@ class GeminiAdapter implements LLMAdapter {
   async chatWithTools(
     messages: LLMMessage[],
     tools: ToolDefinition[],
-    toolResults?: ToolResult[],
   ): Promise<LLMResponse> {
     if (!geminiKey) throw new LLMAuthError("Gemini");
 
     const systemMsg = messages.find(m => m.role === "system");
     const turns = messages.filter(m => m.role !== "system");
 
-    const contents: object[] = turns.map(m => ({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }],
-    }));
-
-    if (toolResults && toolResults.length > 0) {
-      contents.push({
-        role: "user",
-        parts: toolResults.map(r => ({
-          functionResponse: { name: r.name, response: { content: r.output } },
-        })),
-      });
-    }
+    const contents: object[] = turns.map(m => {
+      if (m.toolCalls && m.toolCalls.length > 0) {
+        return {
+          role: "model",
+          parts: m.toolCalls.map(tc => ({ functionCall: { name: tc.name, args: tc.args } })),
+        };
+      }
+      if (m.toolResults && m.toolResults.length > 0) {
+        return {
+          role: "user",
+          parts: m.toolResults.map(r => ({
+            functionResponse: { name: r.name, response: { content: r.output } },
+          })),
+        };
+      }
+      return {
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
+      };
+    });
 
     const body: Record<string, unknown> = {
       contents,
@@ -314,14 +325,36 @@ class GroqAdapter implements LLMAdapter {
   async chatWithTools(
     messages: LLMMessage[],
     tools: ToolDefinition[],
-    toolResults?: ToolResult[],
   ): Promise<LLMResponse> {
     if (!groqKey) throw new LLMAuthError("Groq");
 
-    const finalMessages: object[] = [...messages];
-    if (toolResults && toolResults.length > 0) {
-      for (const r of toolResults) {
-        finalMessages.push({ role: "tool", tool_call_id: r.toolCallId, content: r.output });
+    // Llama models sometimes emit tool calls as inline <function=name> text.
+    // An explicit system-level instruction suppresses this behaviour.
+    const TOOL_DISCIPLINE =
+      "\n\nIMPORTANT: You have access to tools. When you need to call a tool you MUST use the structured tool_calls mechanism — never write function calls as raw text in your response. Do NOT output any inline function-call syntax such as <function=name>, <function(name)>, or similar patterns in your message content. All tool invocations must go through the tool_calls API field only.";
+
+    // Groq/OpenAI: tool results are individual messages, so flatten them
+    const finalMessages: object[] = [];
+    for (const m of messages) {
+      if (m.toolCalls && m.toolCalls.length > 0) {
+        finalMessages.push({
+          role: "assistant",
+          content: null,
+          tool_calls: m.toolCalls.map(tc => ({
+            id: tc.id,
+            type: "function",
+            function: { name: tc.name, arguments: JSON.stringify(tc.args) },
+          })),
+        });
+      } else if (m.toolResults && m.toolResults.length > 0) {
+        // Each tool result must be its own message in OpenAI format
+        for (const r of m.toolResults) {
+          finalMessages.push({ role: "tool", tool_call_id: r.toolCallId, content: r.output });
+        }
+      } else if (m.role === "system") {
+        finalMessages.push({ ...m, content: m.content + TOOL_DISCIPLINE });
+      } else {
+        finalMessages.push(m);
       }
     }
 
@@ -427,7 +460,6 @@ class ClaudeAdapter implements LLMAdapter {
   async chatWithTools(
     messages: LLMMessage[],
     tools: ToolDefinition[],
-    toolResults?: ToolResult[],
   ): Promise<LLMResponse> {
     if (!claudeKey) throw new LLMAuthError("Claude");
 
@@ -435,21 +467,30 @@ class ClaudeAdapter implements LLMAdapter {
     const turns = messages.filter(m => m.role !== "system");
 
     type ClaudeMessage = { role: string; content: unknown };
-    const claudeMessages: ClaudeMessage[] = turns.map(m => ({
-      role: m.role,
-      content: m.content,
-    }));
-
-    if (toolResults && toolResults.length > 0) {
-      claudeMessages.push({
-        role: "user",
-        content: toolResults.map(r => ({
-          type: "tool_result",
-          tool_use_id: r.toolCallId,
-          content: r.output,
-        })),
-      });
-    }
+    const claudeMessages: ClaudeMessage[] = turns.map(m => {
+      if (m.toolCalls && m.toolCalls.length > 0) {
+        return {
+          role: "assistant",
+          content: m.toolCalls.map(tc => ({
+            type: "tool_use",
+            id: tc.id,
+            name: tc.name,
+            input: tc.args,
+          })),
+        };
+      }
+      if (m.toolResults && m.toolResults.length > 0) {
+        return {
+          role: "user",
+          content: m.toolResults.map(r => ({
+            type: "tool_result",
+            tool_use_id: r.toolCallId,
+            content: r.output,
+          })),
+        };
+      }
+      return { role: m.role, content: m.content };
+    });
 
     const body: Record<string, unknown> = {
       model: claudeModel,
