@@ -22,8 +22,8 @@
 import type { ToolDefinition, ToolParameterDef, ToolResult } from '@/types';
 import { scanVaultForMarkdown } from '@/services/vault/VaultScanner';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
-import { hybridSearch } from '@/services/search/HybridSearch';
-import { getIndex } from '@/services/indexer/IndexStore';
+import { searchNotes } from '@/services/search/HybridSearch';
+import { getAllNotes } from '@/services/db/VaultDB';
 import { llmChat } from '@/services/llm/LLMClient';
 
 // ── Scanning ───────────────────────────────────────────────────────────────
@@ -100,8 +100,8 @@ export async function executeCustomTool(
   let vaultContext = '';
   if (def.promptTemplate.includes('{{vault_context}}')) {
     const query = String(args.topic ?? args.query ?? Object.values(args)[0] ?? def.name);
-    const index = getIndex();
-    const results = hybridSearch(index, query, undefined, 5);
+    const allNotes = await getAllNotes();
+    const results = searchNotes(allNotes, query, 5);
     vaultContext = results
       .map(r => `### ${r.note.title}\n${r.note.summary}`)
       .join('\n\n');

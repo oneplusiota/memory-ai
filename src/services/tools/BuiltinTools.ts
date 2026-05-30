@@ -4,10 +4,14 @@
  */
 
 import type { ToolDefinition, ToolResult } from '@/types';
-import { hybridSearch } from '@/services/search/HybridSearch';
-import { getIndex } from '@/services/indexer/IndexStore';
+import { searchNotes } from '@/services/search/HybridSearch';
+import { getAllNotes, upsertNote, upsertLinks, setEmbedding } from '@/services/db/VaultDB';
+import { embed as gloveEmbed, isReady as gloveReady } from '@/services/search/GloveService';
+import { parseNote } from '@/services/vault/MarkdownParser';
 import { readNote, createNote, appendToNote } from '@/services/vault/VaultWriter';
+import { extractDensestParagraph } from '@/utils/textUtils';
 import { getTodayDateString, getTimeHeading } from '@/utils/dateUtils';
+import { noteTitle } from '@/utils/pathUtils';
 
 // ── Tool definitions (sent to LLM) ─────────────────────────────────────────
 
@@ -101,18 +105,33 @@ export async function executeBuiltinTool(
   }
 }
 
-function executeSearchVault(toolCallId: string, args: Record<string, unknown>): ToolResult {
+async function executeSearchVault(toolCallId: string, args: Record<string, unknown>): Promise<ToolResult> {
   const query = String(args.query ?? '');
   const limit = Number(args.limit ?? 5);
-  const index = getIndex();
-  const results = hybridSearch(index, query, undefined, limit);
+
+  const allNotes = await getAllNotes();
+  const results = searchNotes(allNotes, query, limit);
 
   if (results.length === 0) {
-    return { toolCallId, name: 'search_vault', output: 'No notes found matching that query.' };
+    // Fall back to most recently modified notes so the AI can still find recently logged entries
+    const recent = [...allNotes]
+      .sort((a, b) => b.lastModified - a.lastModified)
+      .slice(0, 5);
+    if (recent.length === 0) {
+      return { toolCallId, name: 'search_vault', output: 'No notes found matching that query and the vault appears to be empty.' };
+    }
+    const formatted = recent
+      .map((n, i) => `${i + 1}. **${n.title}** (${n.id})\n   ${(n.semanticSummary ?? n.summary) || 'No summary.'}`)
+      .join('\n');
+    return {
+      toolCallId,
+      name: 'search_vault',
+      output: `No notes matched the keyword search. Here are the 5 most recently modified notes — check if any contain the information:\n${formatted}`,
+    };
   }
 
   const formatted = results
-    .map((r, i) => `${i + 1}. **${r.note.title}** (${r.note.id})\n   ${r.note.summary || 'No summary.'}`)
+    .map((r, i) => `${i + 1}. **${r.note.title}** (${r.note.id})\n   ${(r.note.semanticSummary ?? r.note.summary) || 'No summary.'}`)
     .join('\n');
   return { toolCallId, name: 'search_vault', output: `Found ${results.length} notes:\n${formatted}` };
 }
@@ -132,13 +151,12 @@ async function executeReadNote(
   return { toolCallId, name: 'read_note', output: content };
 }
 
-function executeListNotes(toolCallId: string, args: Record<string, unknown>): ToolResult {
-  const index = getIndex();
+async function executeListNotes(toolCallId: string, args: Record<string, unknown>): Promise<ToolResult> {
   const typeFilter = args.type ? String(args.type) : null;
   const tagFilter = args.tag ? String(args.tag) : null;
   const limit = Number(args.limit ?? 20);
 
-  let notes = Object.values(index.notes);
+  let notes = await getAllNotes();
 
   if (typeFilter) notes = notes.filter(n => n.type === typeFilter);
   if (tagFilter) notes = notes.filter(n => n.tags.includes(tagFilter!));
@@ -187,7 +205,8 @@ function executeUpdateNote(toolCallId: string, args: Record<string, unknown>): T
 }
 
 /**
- * Actually execute a confirmed pending write.
+ * Actually execute a confirmed pending write, then re-index the note so it
+ * is immediately visible to search_vault / list_notes without a manual reindex.
  */
 export async function executePendingWrite(
   vaultUri: string,
@@ -197,5 +216,34 @@ export async function executePendingWrite(
     await createNote(vaultUri, pendingWrite.path, pendingWrite.content);
   } else {
     await appendToNote(vaultUri, pendingWrite.path, pendingWrite.content);
+  }
+
+  // Upsert into VaultDB so the note is immediately searchable
+  try {
+    const written = await readNote(vaultUri, pendingWrite.path);
+    if (written !== null) {
+      const parsed = parseNote(written, noteTitle(pendingWrite.path));
+      await upsertNote({
+        id: pendingWrite.path,
+        title: parsed.title,
+        tags: parsed.tags,
+        aliases: parsed.aliases,
+        summary: extractDensestParagraph(parsed.body),
+        outlinks: parsed.outlinks,
+        type: parsed.type,
+        area: parsed.area,
+        status: parsed.status,
+        lastModified: Date.now(),
+      });
+      await upsertLinks(pendingWrite.path, parsed.outlinks);
+
+      // Embed immediately if model is loaded
+      if (gloveReady()) {
+        const vec = gloveEmbed(parsed.body);
+        if (vec) await setEmbedding(pendingWrite.path, Array.from(vec));
+      }
+    }
+  } catch {
+    // Non-critical — the note is still written to disk
   }
 }
