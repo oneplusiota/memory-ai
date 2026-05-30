@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Modal, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, Snackbar, Text, TextInput } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -182,25 +182,31 @@ function KeyModal({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={onClose} />
-      <View style={styles.modalSheet}>
-        <View style={styles.modalHandle} />
-        <Text style={styles.modalTitle}>{title}</Text>
-        <TextInput
-          mode="outlined"
-          label={placeholder}
-          value={value}
-          onChangeText={onChange}
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-          style={styles.keyModalInput}
-          dense
-        />
-        <View style={styles.keyModalActions}>
-          <Button mode="text" onPress={onClose} style={styles.keyModalBtn}>Cancel</Button>
-          <Button mode="contained" onPress={() => { onSave(); onClose(); }} style={styles.keyModalBtn}>Save</Button>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.keyModalAvoid}
+      >
+        <View style={styles.modalSheet}>
+          <View style={styles.modalHandle} />
+          <Text style={styles.modalTitle}>{title}</Text>
+          <TextInput
+            mode="outlined"
+            label={placeholder}
+            value={value}
+            onChangeText={onChange}
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={styles.keyModalInput}
+            dense
+            autoFocus
+          />
+          <View style={styles.keyModalActions}>
+            <Button mode="text" onPress={onClose} style={styles.keyModalBtn}>Cancel</Button>
+            <Button mode="contained" onPress={() => { onSave(); onClose(); }} style={styles.keyModalBtn}>Save</Button>
+          </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -837,6 +843,7 @@ const styles = StyleSheet.create({
   },
   modalCancelText: { fontSize: 15, fontWeight: '600', color: '#374151' },
 
+  keyModalAvoid: { justifyContent: 'flex-end' },
   keyModalInput: { backgroundColor: '#FFFFFF', marginBottom: 16 },
   keyModalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8 },
   keyModalBtn: { minWidth: 80 },
