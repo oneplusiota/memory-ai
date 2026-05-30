@@ -6,42 +6,157 @@ Built for Android as a native APK using React Native + Expo bare workflow.
 
 ---
 
+## Table of Contents
+
+- [Install](#install-no-build-required)
+- [Features](#features)
+- [LLM Providers](#llm-providers)
+- [AI Tools](#ai-tools)
+- [STT Modes](#stt-modes)
+- [Architecture](#architecture)
+- [Vault Structure](#vault-structure)
+- [Tech Stack](#tech-stack)
+- [Getting API Keys](#getting-api-keys)
+- [Setup & Build](#setup--build)
+- [Note Schema Reference](#note-schema-reference)
+- [Releasing a New APK](#releasing-a-new-apk)
+- [License](#license)
+
+---
+
 ## Install (No Build Required)
 
 > **Quickest path** — no Android Studio or build tools needed.
 
 1. Go to the [**Releases page**](https://github.com/oneplusiota/memory-ai/releases) and download the latest `memory-ai-vX.X.X.apk`
-2. On your Android phone: **Settings → Apps → Special app access → Install unknown apps** → allow your browser or Files app to install APKs
+2. On your Android phone: **Settings → Apps → Special app access → Install unknown apps** → allow your browser or Files app
 3. Open the downloaded APK and tap **Install**
 4. Launch **memory.ai** → **Settings (⚙️)** → enter your API key → pick your Obsidian vault folder
 
-> **Note on Google Sign-In**: The pre-built APK uses a CI-generated keystore, so Google Sign-In won't work via the pre-built APK. This is fine — Sign-In is identity-only and **not required**. All AI features and vault sync work without it.
+> **Note on Google Sign-In**: The pre-built APK uses a CI-generated keystore, so Google Sign-In won't work. Sign-In is identity-only and **not required** — all AI features and vault sync work without it.
 
 ---
 
 ## Features
 
-- 🎙️ **Tap-to-record** — live, editable transcript with continuous Android STT
+- 🎙️ **Tap-to-record** — live, editable transcript with continuous Android STT; auto-restarts on silence
 - 🧠 **AI conversation** — chat with an assistant that knows your notes (answers questions, acknowledges captures)
-- 📝 **Smart routing** — AI decides whether to log, update an atom, or create a new note
-- 📂 **Obsidian-native structure** — `daily/`, `atoms/`, `conversations/` folders with Dataview-compatible frontmatter
-- 🔍 **Local search** — on-device TF-IDF + wikilink graph, no API calls for indexing
+- 🤖 **Agentic tool calling** — AI can search your vault, read/create/update notes, and search the web during a conversation
+- 📝 **Smart routing** — AI decides whether to log to the daily note, update an existing atom, or create a new one
+- 📂 **Obsidian-native structure** — `daily/`, `atoms/`, `conversations/` with Dataview-compatible frontmatter
+- 🔍 **Local hybrid search** — on-device TF-IDF + wikilink graph, no API calls for indexing
 - 📚 **Conversation history** — every session saved to your vault, viewable in-app
-- 🔄 **Dual LLM provider** — Gemini (1,500 req/day free) or Groq/Llama 3.3 70B (14,400 req/day free)
+- 🔄 **Multi-provider LLM** — Gemini, Groq, or Claude; free and paid models; factory-pattern architecture for easy extensibility
+- 🛠️ **Custom tools** — define your own tools as `.tool.md` files in your vault
 - ✏️ **Edit while speaking** — fix words in real-time before sending
+
+---
+
+## LLM Providers
+
+memory.ai uses a **factory pattern** — providers are registered adapters, making it trivial to add new ones. Three providers are built in:
+
+### Gemini (Google AI Studio)
+
+| Model | Tier | Notes |
+|---|---|---|
+| Gemini 2.0 Flash | Free · 1,500/day | Recommended default |
+| Gemini 2.5 Flash | Free · 500/day | Most capable free model |
+| Gemini 1.5 Flash | Free · 1,500/day | Legacy |
+| Gemini 2.5 Pro ★ | Paid | Best reasoning & coding |
+| Gemini 1.5 Pro ★ | Paid | 1M context window |
+| Gemini 2.0 Flash Thinking ★ | Paid | Extended thinking |
+
+### Groq
+
+| Model | Tier | Notes |
+|---|---|---|
+| Llama 3.3 70B Versatile | Free | Recommended default |
+| Llama 3.1 8B Instant | Free | Fastest / lowest latency |
+| Llama 3 70B / 8B | Free | 8k context |
+| Mixtral 8x7B | Free | 32k context |
+| Gemma 2 9B | Free | Google instruction-tuned |
+| Llama 3.3 70B SpecDec ★ | Paid | Speculative decoding |
+| Llama 3.2 90B Vision ★ | Paid | Multimodal |
+| DeepSeek R1 70B ★ | Paid | Chain-of-thought reasoning |
+| Qwen QwQ 32B ★ | Paid | Strong reasoning |
+| Kimi K2 ★ | Paid | Agentic & tool use |
+
+### Claude (Anthropic)
+
+| Model | Tier | Notes |
+|---|---|---|
+| Claude Haiku 3.5 | Paid | Cheapest & fastest |
+| Claude Sonnet 4.5 | Paid | Balanced · recommended |
+| Claude Opus 4.5 ★ | Paid | Most capable 4.5 |
+| Claude Sonnet 4 (stable) ★ | Paid | Latest stable Sonnet 4 |
+| Claude Opus 4 (stable) ★ | Paid | Top quality |
+| Claude 3.5 Sonnet | Paid | Previous gen · widely available |
+| Claude 3.5 Haiku | Paid | Previous gen · fast & cheap |
+| Claude 3.7 Sonnet ★ | Paid | Extended thinking support |
+
+★ = paid / gated model. If your API key doesn't have access, the app shows a clear error message and prompts you to switch models.
+
+---
+
+## AI Tools
+
+When a vault is connected, the AI runs in **agentic mode** and can call tools during a conversation:
+
+| Tool | Description |
+|---|---|
+| `search_vault` | Hybrid TF-IDF + graph search across your notes |
+| `read_note` | Read a specific note by path |
+| `create_note` | Create a new atom note |
+| `update_note` | Update an existing note |
+| `list_notes` | List notes filtered by type/area/status |
+| `get_date_time` | Current date and time |
+| `web_search` | Search the web (Tavily or Brave) |
+| `get_calendar_events` | Read upcoming Google Calendar events |
+| `create_calendar_event` | Create a calendar event (requires confirmation) |
+| Custom `.tool.md` | User-defined tools stored in `vault/tools/` |
+
+**Agent modes** (configurable in Settings):
+- **Agentic loop** — AI calls tools in sequence until the task is complete
+- **Single call** — one round of tool calls, then stops
+
+Write operations (create/update note, create event) always ask for confirmation before executing.
+
+---
+
+## STT Modes
+
+| Mode | Speed | Accuracy | Notes |
+|---|---|---|---|
+| Native Android STT | Fast | Good | Default; continuous, auto-restarts on silence |
+| Gemini Audio | ~1–2 s | Best | Sends audio file to Gemini for transcription |
+| Native + AI Correction | ~1 s overhead | Better | Native speed + Gemini cleanup pass |
+
+Switch in **Settings → Voice**.
 
 ---
 
 ## Architecture
 
 ```
-Voice Input (Android STT)
+Voice Input (Android STT / Gemini Audio)
         ↓
 Live Editable Transcript
         ↓
-Send Message → Hybrid Search (TF-IDF + wikilink graph)
+Send Message
         ↓
-LLM Chat (Gemini / Groq) + Vault Context
+AgentClient — agentic tool-calling loop
+  ├── search_vault  → HybridSearch (TF-IDF + wikilink graph)
+  ├── read_note     → VaultScanner + MarkdownParser
+  ├── create/update → VaultWriter (confirm before write)
+  ├── web_search    → Tavily / Brave Search API
+  └── calendar      → Google Calendar API
+        ↓
+LLMClient (provider-agnostic façade)
+  └── LLMAdapterFactory
+        ├── GeminiAdapter   (generativelanguage.googleapis.com)
+        ├── GroqAdapter     (api.groq.com — OpenAI-compatible)
+        └── ClaudeAdapter   (api.anthropic.com)
         ↓
 AI Response displayed in chat
         ↓
@@ -52,7 +167,9 @@ RoutingDecision JSON → appendToDailyNote() + createAtom/updateAtom()
 Re-index changed files in-memory
 ```
 
-### Vault Structure
+---
+
+## Vault Structure
 
 ```
 vault/
@@ -61,8 +178,10 @@ vault/
 ├── atoms/
 │   ├── James-Smith.md          # type: person, area: work, status: active
 │   └── Q3-Roadmap.md           # type: project, status: active
-└── conversations/
-    └── 2026-05-28-had-a-meeting.md
+├── conversations/
+│   └── 2026-05-28-had-a-meeting.md
+└── tools/                      # Optional custom tool definitions
+    └── MyTool.tool.md
 ```
 
 **Dataview queries this enables:**
@@ -80,30 +199,38 @@ LIST FROM "conversations" WHERE saved_to_vault = true
 | Concern | Choice |
 |---|---|
 | Framework | React Native + Expo bare workflow |
-| Platform | Android only (APK) |
+| Platform | Android (APK) |
 | File access | `expo-file-system` Storage Access Framework |
 | Voice STT | `expo-speech-recognition` (Android native, continuous) |
 | Audio STT | `expo-audio` (for Gemini Audio mode) |
-| AI — Gemini | `generativelanguage.googleapis.com` REST |
-| AI — Groq | `api.groq.com/openai/v1` (OpenAI-compatible) |
+| LLM | `LLMAdapterFactory` — Gemini, Groq, Claude adapters |
+| Agent loop | Custom `AgentClient` with tool-calling |
 | Local search | In-memory TF-IDF + BFS wikilink graph |
 | UI | React Native Paper + React Native Reanimated |
 | Navigation | React Navigation stack |
-| Storage | `expo-secure-store` for keys/settings |
+| Storage | `expo-secure-store` for API keys & settings |
 
 ---
 
 ## Getting API Keys
 
-### Gemini (Google AI Studio) — Free, 1,500 req/day
-1. Go to [aistudio.google.com](https://aistudio.google.com)
-2. Click **Get API key** → **Create API key**
-3. Copy the key — no credit card required
+### Gemini — Free tier (1,500 req/day)
+1. Go to [aistudio.google.com](https://aistudio.google.com) → **Get API key** → **Create API key**
+2. No credit card required for the free tier
 
-### Groq — Free, ~14,400 req/day (Llama 3.3 70B)
-1. Go to [console.groq.com](https://console.groq.com)
-2. Sign up → **API Keys** → **Create API key**
-3. Copy the key — no credit card required
+### Groq — Free tier (~14,400 req/day)
+1. Go to [console.groq.com](https://console.groq.com) → Sign up → **API Keys** → **Create API key**
+2. No credit card required for the free tier
+
+### Claude (Anthropic) — Pay-per-use
+1. Go to [console.anthropic.com](https://console.anthropic.com) → **API Keys** → **Create Key**
+2. Requires a funded account; see [Anthropic pricing](https://www.anthropic.com/pricing)
+
+### Tavily (web search) — Free tier (1,000 searches/month)
+1. Go to [app.tavily.com](https://app.tavily.com) → Sign up → copy your API key
+
+### Brave Search (web search alternative) — Free tier (2,000 searches/month)
+1. Go to [brave.com/search/api](https://brave.com/search/api/) → Sign up → copy your API key
 
 ---
 
@@ -111,11 +238,11 @@ LIST FROM "conversations" WHERE saved_to_vault = true
 
 ### Prerequisites
 
-- macOS (for Android build toolchain)
+- macOS
 - [Android Studio](https://developer.android.com/studio) with Android SDK 36
-- Java 17 (via `jenv` or Android Studio's bundled JDK)
+- Java 17 (via Android Studio's bundled JDK or `jenv`)
 - Node.js 20+
-- An Android device or emulator with API 24+
+- An Android device or emulator (API 24+)
 
 ### 1. Clone and install
 
@@ -134,14 +261,14 @@ set -x PATH $PATH $ANDROID_HOME/platform-tools $ANDROID_HOME/emulator
 set -x JAVA_HOME "/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 ```
 
-### 3. Firebase / Google Sign-In setup (one-time)
+### 3. Firebase / Google Sign-In setup (one-time, optional)
 
 1. Create a project at [console.firebase.google.com](https://console.firebase.google.com)
 2. Add Android app → package name `com.memoryai.app`
-3. Add your debug SHA-1 (from `keytool -keystore ~/.android/debug.keystore -list -v -storepass android`)
+3. Add your debug SHA-1: `keytool -keystore ~/.android/debug.keystore -list -v -storepass android`
 4. Download `google-services.json` → place at `android/app/google-services.json`
 
-### 4. Build and install
+### 4. Build and run
 
 ```bash
 # Create debug keystore (first time only)
@@ -151,23 +278,20 @@ keytool -genkey -v -keystore ~/.android/debug.keystore \
   -keyalg RSA -keysize 2048 -validity 10000 \
   -dname "CN=Android Debug,O=Android,C=US"
 
-# Copy to android/app/
 cp ~/.android/debug.keystore android/app/debug.keystore
-
-# Create local.properties
 echo "sdk.dir=$HOME/Library/Android/sdk" > android/local.properties
 
-# Build and install
 npx expo run:android --device
 ```
 
 ### 5. First launch
 
 1. Open **Settings** (⚙️ icon)
-2. Enter your **Gemini** or **Groq** API key → Save
-3. Tap **Pick Vault Folder** → select your Obsidian vault
-4. Wait for indexing to complete
-5. Start talking 🎙️
+2. Choose your **LLM Provider** (Gemini, Groq, or Claude) and enter your API key
+3. Select a **model** (free models are listed first)
+4. Tap **Pick Vault Folder** → select your Obsidian vault
+5. Wait for indexing to complete
+6. Start talking 🎙️
 
 ---
 
@@ -217,18 +341,6 @@ tags: [conversation]
 
 ---
 
-## STT Modes
-
-| Mode | Description | Speed | Accuracy |
-|---|---|---|---|
-| Native Android STT | Uses Android's built-in recognizer | Fast | Good |
-| Gemini Audio | Sends audio to Gemini for transcription | ~1-2s | Best |
-| Native + AI Correction | Native speed, Gemini cleans up errors | ~1s overhead | Better |
-
-Switch in **Settings → Voice Transcription**.
-
----
-
 ## Releasing a New APK
 
 Tag the commit and push — GitHub Actions builds and attaches the APK automatically:
@@ -242,10 +354,4 @@ The workflow (`.github/workflows/build.yml`) requires one GitHub secret:
 
 | Secret | How to get it |
 |---|---|
-| `GOOGLE_SERVICES_JSON` | `base64 -i android/app/google-services.json \| pbcopy` then paste in GitHub → Settings → Secrets → Actions |
-
----
-
-## License
-
-MIT — see [LICENSE](LICENSE)
+| `GOOGLE_SERVICES_JSON` | `base64 -i android/app/google-services.json \| pbcopy` → paste in GitHub → Settings → Secrets → Actions |
