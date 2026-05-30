@@ -39,7 +39,7 @@ export async function chat(
 ): Promise<ConversationResponse> {
   const userPrompt = buildChatPrompt(history, relevantNotes, currentMessage, allAtoms, lifeContext);
   const messages: LLMMessage[] = [
-    { role: 'system', content: buildSystemPrompt(mode) },
+    { role: 'system', content: buildSystemPrompt(mode, false) },
     { role: 'user', content: userPrompt },
   ];
   const text = await llmChat(messages, CONVERSATION_RESPONSE_SCHEMA, CONVERSATION_SCHEMA_DESCRIPTION);

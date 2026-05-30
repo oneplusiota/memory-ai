@@ -1,15 +1,37 @@
 import type { ConversationMessage, ConversationMode, NoteNode } from '@/types';
 
-const SYSTEM_BASE = `You are a personal AI assistant embedded in a voice-first journaling app called memory.ai. You have access to the user's Obsidian knowledge base.
+const PERSONA = `You are a personal AI assistant embedded in a voice-first journaling app called memory.ai. You have access to the user's Obsidian knowledge base.`;
 
-## Save behaviour
+// Injected only on the non-tool (JSON schema) path where suggest_save is part of the response.
+const SUGGEST_SAVE_BLOCK = `## Save behaviour
 
 Set \`suggest_save\` to **true ONLY when the user explicitly says** something like:
 - "save this", "remember this", "note that down", "add this to vault", "keep track of this", "log this"
 
-Do NOT set suggest_save just because the content seems important. Wait to be asked.
+Do NOT set suggest_save just because the content seems important. Wait to be asked.`;
 
-## Using the knowledge base
+// Injected only on the agentic (tool-calling) path.
+const TOOL_USE_POLICY = `## Tool Use Policy
+
+### Answering questions about the user's life
+When the user asks about anything personal — their activities, habits, health, goals, people, projects, daily logs, or anything they may have previously noted — ALWAYS call search_vault first before answering. Use a concise keyword query (e.g. "cigarettes smoking today", "workout", "sleep"). Do NOT say "I don't have that information" without first searching. Only after search_vault returns empty results may you say you couldn't find a record.
+
+### Saving to vault
+When the user asks you to save, remember, update, or write anything to their vault:
+1. ALWAYS call search_vault first to check for an existing note on the same topic.
+2. If a closely matching note is found, use update_note to append to it — do NOT create a duplicate.
+3. Only call create_note if no closely matching note exists.
+
+Never skip the search step. Duplicate notes are worse than updating an imperfect existing note.
+
+CRITICAL: Never state in your text reply that you have saved, written, remembered, or updated a note. Vault writes happen exclusively through tool calls — your text response cannot write anything. Only acknowledge a save after a tool result confirms it (e.g. "Done — saved as [[Note Name]]").`;
+
+// Injected on the non-tool path in place of TOOL_USE_POLICY.
+const NO_VAULT_TOOLS = `## Vault writes
+
+You do not have vault write tools available in this context. If the user asks to save something, tell them to tap the Save button after the conversation, or set up their vault in Settings.`;
+
+const SYSTEM_BASE_COMMON = `## Using the knowledge base
 
 - Reference atoms with [[wikilinks]] when relevant
 - Use the atom index to understand the user's world: their projects, relationships, goals
@@ -132,8 +154,11 @@ After producing the code block, tell the user: "Shall I save this to your vault 
 - After saving, it will appear in the Tools screen and be available to the AI automatically`,
 };
 
-export function buildSystemPrompt(mode: ConversationMode = 'journal'): string {
-  return `${MODE_OVERRIDES[mode]}\n\n${SYSTEM_BASE}`;
+export function buildSystemPrompt(mode: ConversationMode = 'journal', toolsAvailable: boolean = true): string {
+  const toolBlock = toolsAvailable
+    ? TOOL_USE_POLICY
+    : `${SUGGEST_SAVE_BLOCK}\n\n${NO_VAULT_TOOLS}`;
+  return `${PERSONA}\n\n${MODE_OVERRIDES[mode]}\n\n${SYSTEM_BASE_COMMON}\n\n${toolBlock}`;
 }
 
 export function buildChatPrompt(
@@ -158,7 +183,8 @@ export function buildChatPrompt(
   const notesBlock = relevantNotes.length > 0
     ? relevantNotes.map((n) => {
         const meta = [n.type, n.area, n.status].filter(Boolean).join(' · ');
-        return `[[${n.title}]] (${n.id})${meta ? ` — ${meta}` : ''}\nTags: ${n.tags.map((t) => `#${t}`).join(' ') || 'none'}\n${n.summary.slice(0, 200)}`;
+        const body = (n.semanticSummary ?? n.summary).slice(0, 600);
+        return `[[${n.title}]] (${n.id})${meta ? ` — ${meta}` : ''}\nTags: ${n.tags.map((t) => `#${t}`).join(' ') || 'none'}\n${body}`;
       }).join('\n\n')
     : 'No relevant notes found.';
 
