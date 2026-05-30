@@ -11,7 +11,7 @@ import { ConversationDetailScreen } from '@/screens/ConversationDetailScreen';
 import type { RoutingDecision } from '@/types';
 
 export type RootStackParamList = {
-  Conversation: undefined;
+  Conversation: { resumeFilePath?: string } | undefined;
   Settings: undefined;
   Confirm: { decision: RoutingDecision; vaultUri: string; conversationFilePath?: string };
   History: undefined;

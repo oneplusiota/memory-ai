@@ -12,7 +12,8 @@ import {
   View,
 } from 'react-native';
 import { ActivityIndicator, Text } from 'react-native-paper';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import type { RouteProp } from '@react-navigation/native';
 import type { StackNavigationProp } from '@react-navigation/stack';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
@@ -30,10 +31,12 @@ const MODES: { id: ConversationMode; label: string }[] = [
 ];
 
 type Nav = StackNavigationProp<RootStackParamList, 'Conversation'>;
+type Route = RouteProp<RootStackParamList, 'Conversation'>;
 const STT_MODE_KEY = 'stt_mode';
 
 export function ConversationScreen() {
   const navigation = useNavigation<Nav>();
+  const route = useRoute<Route>();
   const [sttMode, setSttMode] = useState<STTMode>('native');
   const flatListRef = useRef<FlatList>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -48,8 +51,17 @@ export function ConversationScreen() {
     messages, transcript, isRecording, isSending, error,
     lastSuggestSave, conversationMode, setConversationMode,
     handleTranscriptChange, toggleRecording,
-    sendMessage, saveToVault, persistConversation, clearConversation,
+    sendMessage, saveToVault, loadConversation, persistConversation, clearConversation,
   } = useConversation(sttMode);
+
+  // Load a past conversation when vaultUri becomes available (loadConversation
+  // changes reference only when vaultUri changes, so this retries until ready)
+  const resumeFilePath = route.params?.resumeFilePath;
+  useEffect(() => {
+    if (resumeFilePath && messages.length === 0) {
+      loadConversation(resumeFilePath);
+    }
+  }, [resumeFilePath, loadConversation]);
 
   // Pulsing animation for mic icon while recording
   useEffect(() => {

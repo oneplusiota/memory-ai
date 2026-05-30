@@ -2,6 +2,9 @@ import { StorageAccessFramework, EncodingType } from 'expo-file-system/legacy';
 import { getDailyNotePath, getTodayDateString, getTimeHeading, getISOWeek, getReadableDailyTitle } from '@/utils/dateUtils';
 import type { ConversationMessage } from '@/types';
 
+let _msgIdCounter = 1000;
+const mkId = () => String(++_msgIdCounter);
+
 export async function appendToDailyNote(vaultUri: string, entry: string): Promise<string> {
   const relativePath = getDailyNotePath();
   const existingUri = await resolveFileUri(vaultUri, relativePath);
@@ -143,6 +146,53 @@ function parseConversationFrontmatter(content: string) {
   const extracted = raw.match(/^extracted: true$/m) !== null;
   const preview = (raw.match(/^preview: "?(.*?)"?\s*$/m)?.[1] ?? '').trim();
   return { title, date, time, extracted, preview };
+}
+
+export async function readConversationMessages(
+  vaultUri: string,
+  relativePath: string,
+): Promise<ConversationMessage[]> {
+  try {
+    const fileUri = await resolveFileUri(vaultUri, relativePath);
+    if (!fileUri) return [];
+    const content = await StorageAccessFramework.readAsStringAsync(fileUri);
+    const body = content.replace(/^---\n[\s\S]*?\n---\n*/, '').trim();
+    if (!body) return [];
+    const parts = body.split(/\n\n(?=\*\*(You|AI)\*\*: )/);
+    const msgs: ConversationMessage[] = [];
+    for (const part of parts) {
+      const trimmed = part.trim();
+      const userMatch = trimmed.match(/^\*\*You\*\*: ([\s\S]+)$/);
+      const aiMatch = trimmed.match(/^\*\*AI\*\*: ([\s\S]+)$/);
+      if (userMatch) msgs.push({ id: mkId(), role: 'user', text: userMatch[1].trim(), timestamp: 0 });
+      else if (aiMatch) msgs.push({ id: mkId(), role: 'assistant', text: aiMatch[1].trim(), timestamp: 0 });
+    }
+    return msgs;
+  } catch {
+    return [];
+  }
+}
+
+export async function overwriteConversationFile(
+  vaultUri: string,
+  relativePath: string,
+  messages: ConversationMessage[],
+): Promise<void> {
+  try {
+    const fileUri = await resolveFileUri(vaultUri, relativePath);
+    if (!fileUri) return;
+    const existing = await StorageAccessFramework.readAsStringAsync(fileUri);
+    const fmMatch = existing.match(/^(---\n[\s\S]*?\n---\n*)/);
+    const frontmatter = fmMatch ? fmMatch[1] : '';
+    const body = messages
+      .map((m) => `**${m.role === 'user' ? 'You' : 'AI'}**: ${m.text}`)
+      .join('\n\n');
+    await StorageAccessFramework.writeAsStringAsync(fileUri, `${frontmatter}${body}\n`, {
+      encoding: EncodingType.UTF8,
+    });
+  } catch {
+    // best-effort
+  }
 }
 
 function extractFirstUserMessage(content: string): string {

@@ -4,7 +4,7 @@ import { useVault } from './useVault';
 import { hybridSearch } from '@/services/search/HybridSearch';
 import { getIndex } from '@/services/indexer/IndexStore';
 import { chat, saveConversation } from '@/services/gemini/ConversationClient';
-import { saveConversationFile, readLifeContext } from '@/services/vault/VaultWriter';
+import { saveConversationFile, readConversationMessages, overwriteConversationFile, readLifeContext } from '@/services/vault/VaultWriter';
 import { refreshLifeContext } from '@/services/llm/LifeContextClient';
 import type { ConversationMessage, ConversationMode, RoutingDecision, STTMode } from '@/types';
 import * as SecureStore from 'expo-secure-store';
@@ -17,12 +17,18 @@ const mkId = () => String(++msgIdCounter);
 export function useConversation(sttMode: STTMode = 'native') {
   const { vaultUri } = useVault();
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const messagesRef = useRef<ConversationMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastSuggestSave, setLastSuggestSave] = useState(false);
   const [conversationMode, setConversationModeState] = useState<ConversationMode>('journal');
   const conversationFilePathRef = useRef<string | null>(null);
   const lifeContextRef = useRef<string | null>(null);
+
+  // Keep ref in sync so persistConversation never reads a stale closure
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   // Load persisted conversation mode on mount
   useEffect(() => {
@@ -82,6 +88,17 @@ export function useConversation(sttMode: STTMode = 'native') {
     }
   }, [isRecording, startListening, stopListening]);
 
+  const autosave = useCallback((msgs: ConversationMessage[]) => {
+    if (!vaultUri || msgs.length === 0) return;
+    if (conversationFilePathRef.current) {
+      overwriteConversationFile(vaultUri, conversationFilePathRef.current, msgs).catch(() => {});
+    } else {
+      saveConversationFile(vaultUri, msgs, false, []).then((path) => {
+        conversationFilePathRef.current = path;
+      }).catch(() => {});
+    }
+  }, [vaultUri]);
+
   const sendMessage = useCallback(async (text: string) => {
     const finalText = sttMode === 'native-corrected' ? await postCorrect(text) : text;
     if (!finalText.trim()) return;
@@ -94,27 +111,31 @@ export function useConversation(sttMode: STTMode = 'native') {
     const userMsg: ConversationMessage = {
       id: mkId(), role: 'user', text: finalText.trim(), timestamp: Date.now(),
     };
-    setMessages((prev) => [...prev, userMsg]);
+    const withUser = [...messagesRef.current, userMsg];
+    setMessages(withUser);
+    messagesRef.current = withUser;
 
     try {
       const index = getIndex();
       const results = hybridSearch(index, finalText, undefined, 5);
       const notes = results.map((r) => r.note);
-      const allMessages = [...messages, userMsg];
 
       const allAtoms = Object.values(index.notes).filter(n => n.id.startsWith('atoms/'));
 
-      const response = await chat(allMessages, notes, finalText, allAtoms, lifeContextRef.current ?? undefined, conversationMode);
+      const response = await chat(withUser, notes, finalText, allAtoms, lifeContextRef.current ?? undefined, conversationMode);
       const aiMsg: ConversationMessage = {
         id: mkId(), role: 'assistant', text: response.reply, timestamp: Date.now(),
       };
-      setMessages((prev) => [...prev, aiMsg]);
+      const withAI = [...withUser, aiMsg];
+      setMessages(withAI);
+      messagesRef.current = withAI;
+      autosave(withAI);
       setLastSuggestSave(response.suggest_save);
 
       // Refresh life context in background every 5 user messages
-      const userMsgCount = allMessages.filter(m => m.role === 'user').length;
+      const userMsgCount = withAI.filter(m => m.role === 'user').length;
       if (vaultUri && userMsgCount % 5 === 0) {
-        refreshLifeContext(vaultUri, allMessages).then(updated => {
+        refreshLifeContext(vaultUri, withAI).then(updated => {
           if (updated) lifeContextRef.current = updated;
         }).catch(() => {});
       }
@@ -124,7 +145,7 @@ export function useConversation(sttMode: STTMode = 'native') {
       setIsSending(false);
       resetVoice();
     }
-  }, [messages, sttMode, postCorrect, resetVoice]);
+  }, [sttMode, postCorrect, resetVoice, autosave, conversationMode, vaultUri]);
 
   const saveToVault = useCallback(async (): Promise<{
     decision: RoutingDecision;
@@ -143,19 +164,35 @@ export function useConversation(sttMode: STTMode = 'native') {
     }
   }, [vaultUri, messages]);
 
+  const loadConversation = useCallback(async (filePath: string) => {
+    if (!vaultUri) return;
+    const loaded = await readConversationMessages(vaultUri, filePath);
+    if (loaded.length === 0) return;
+    messagesRef.current = loaded;
+    setMessages(loaded);
+    conversationFilePathRef.current = filePath;
+  }, [vaultUri]);
+
   const persistConversation = useCallback(async () => {
-    if (!vaultUri || messages.length === 0 || conversationFilePathRef.current) return;
+    const current = messagesRef.current;
+    if (!vaultUri || current.length === 0) return;
     try {
-      const path = await saveConversationFile(vaultUri, messages, false, []);
-      conversationFilePathRef.current = path;
+      if (conversationFilePathRef.current) {
+        // Resumed conversation — update the existing file in place
+        await overwriteConversationFile(vaultUri, conversationFilePathRef.current, current);
+      } else {
+        // New conversation — create a new file
+        const path = await saveConversationFile(vaultUri, current, false, []);
+        conversationFilePathRef.current = path;
+      }
     } catch {
       // best-effort
     }
     // Update life context with anything shared in this conversation
-    refreshLifeContext(vaultUri, messages).then(updated => {
+    refreshLifeContext(vaultUri, current).then(updated => {
       if (updated) lifeContextRef.current = updated;
     }).catch(() => {});
-  }, [vaultUri, messages]);
+  }, [vaultUri]);
 
   const clearConversation = useCallback(() => {
     setMessages([]);
@@ -173,13 +210,13 @@ export function useConversation(sttMode: STTMode = 'native') {
     isSending,
     error,
     lastSuggestSave,
-    voiceState,
     conversationMode,
     setConversationMode,
     handleTranscriptChange,
     toggleRecording,
     sendMessage,
     saveToVault,
+    loadConversation,
     persistConversation,
     clearConversation,
   };

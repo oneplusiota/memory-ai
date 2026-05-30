@@ -94,7 +94,7 @@ export function HistoryScreen() {
         renderItem={({ item }) => (
           <ConversationCard
             entry={item}
-            onPress={() => navigation.navigate('ConversationDetail', { relativePath: item.relativePath })}
+            onPress={() => navigation.navigate('Conversation', { resumeFilePath: item.relativePath })}
           />
         )}
       />
