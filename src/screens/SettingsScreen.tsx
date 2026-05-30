@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Animated, Keyboard, Modal, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Button, Snackbar, Text, TextInput } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -179,14 +179,23 @@ function KeyModal({
   onSave: () => void;
   onClose: () => void;
 }) {
+  const keyboardHeight = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', (e) => {
+      Animated.timing(keyboardHeight, { toValue: e.endCoordinates.height, duration: 150, useNativeDriver: false }).start();
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => {
+      Animated.timing(keyboardHeight, { toValue: 0, duration: 150, useNativeDriver: false }).start();
+    });
+    return () => { show.remove(); hide.remove(); };
+  }, [keyboardHeight]);
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={onClose} />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyModalAvoid}
-      >
-        <View style={styles.modalSheet}>
+      <View style={styles.keyModalAvoid}>
+        <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
+        <Animated.View style={[styles.keyModalSheet, { marginBottom: keyboardHeight }]}>
           <View style={styles.modalHandle} />
           <Text style={styles.modalTitle}>{title}</Text>
           <TextInput
@@ -200,13 +209,14 @@ function KeyModal({
             style={styles.keyModalInput}
             dense
             autoFocus
+            onBlur={() => Animated.timing(keyboardHeight, { toValue: 0, duration: 150, useNativeDriver: false }).start()}
           />
           <View style={styles.keyModalActions}>
             <Button mode="text" onPress={onClose} style={styles.keyModalBtn}>Cancel</Button>
             <Button mode="contained" onPress={() => { onSave(); onClose(); }} style={styles.keyModalBtn}>Save</Button>
           </View>
-        </View>
-      </KeyboardAvoidingView>
+        </Animated.View>
+      </View>
     </Modal>
   );
 }
@@ -843,7 +853,11 @@ const styles = StyleSheet.create({
   },
   modalCancelText: { fontSize: 15, fontWeight: '600', color: '#374151' },
 
-  keyModalAvoid: { justifyContent: 'flex-end' },
+  keyModalAvoid: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' },
+  keyModalSheet: {
+    backgroundColor: '#FFFFFF', borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingHorizontal: 20, paddingBottom: 36, paddingTop: 12,
+  },
   keyModalInput: { backgroundColor: '#FFFFFF', marginBottom: 16 },
   keyModalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8 },
   keyModalBtn: { minWidth: 80 },

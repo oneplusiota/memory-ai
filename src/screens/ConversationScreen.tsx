@@ -273,6 +273,7 @@ export function ConversationScreen() {
             multiline
             editable={!isSending}
             onSubmitEditing={handleSend}
+            onBlur={() => Animated.timing(keyboardHeight, { toValue: 0, duration: 150, useNativeDriver: false }).start()}
           />
 
           {/* Right: send or spinner — only when there's text */}
