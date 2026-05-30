@@ -5,6 +5,7 @@
  */
 
 import type { ToolDefinition, ToolResult, WebSearchProvider } from '@/types';
+import { getGeminiKey } from '@/services/llm/LLMClient';
 import * as SecureStore from 'expo-secure-store';
 
 // ── Adapter interface ──────────────────────────────────────────────────────
@@ -33,20 +34,17 @@ export class WebSearchAdapterFactory {
 
 const PROVIDER_KEY = 'web_search_provider';
 const TAVILY_KEY_STORE = 'tavily_api_key';
-const GOOGLE_API_KEY_STORE = 'google_search_api_key';
 const GOOGLE_CX_STORE = 'google_search_cx';
 
 // ── Module-level state ─────────────────────────────────────────────────────
 
 let activeProvider: WebSearchProvider = 'tavily';
 let tavilyKey = '';
-let googleApiKey = '';
 let googleCx = '';
 
 export function setWebSearchProvider(p: WebSearchProvider) { activeProvider = p; }
 export function getWebSearchProvider(): WebSearchProvider { return activeProvider; }
 export function setTavilyKey(k: string) { tavilyKey = k; }
-export function setGoogleApiKey(k: string) { googleApiKey = k; }
 export function setGoogleCx(cx: string) { googleCx = cx; }
 
 // ── Config management ──────────────────────────────────────────────────────
@@ -54,11 +52,9 @@ export function setGoogleCx(cx: string) { googleCx = cx; }
 export async function loadWebSearchConfig(): Promise<void> {
   const provider = await SecureStore.getItemAsync(PROVIDER_KEY);
   const tKey = await SecureStore.getItemAsync(TAVILY_KEY_STORE);
-  const gKey = await SecureStore.getItemAsync(GOOGLE_API_KEY_STORE);
   const gCx = await SecureStore.getItemAsync(GOOGLE_CX_STORE);
   if (provider) activeProvider = provider as WebSearchProvider;
   if (tKey) tavilyKey = tKey;
-  if (gKey) googleApiKey = gKey;
   if (gCx) googleCx = gCx;
 }
 
@@ -72,11 +68,6 @@ export async function saveTavilyKey(k: string): Promise<void> {
   await SecureStore.setItemAsync(TAVILY_KEY_STORE, k);
 }
 
-export async function saveGoogleApiKey(k: string): Promise<void> {
-  googleApiKey = k;
-  await SecureStore.setItemAsync(GOOGLE_API_KEY_STORE, k);
-}
-
 export async function saveGoogleCx(cx: string): Promise<void> {
   googleCx = cx;
   await SecureStore.setItemAsync(GOOGLE_CX_STORE, cx);
@@ -84,13 +75,11 @@ export async function saveGoogleCx(cx: string): Promise<void> {
 
 export async function loadStoredWebSearchKeys(): Promise<{
   tavilyKey: string;
-  googleApiKey: string;
   googleCx: string;
   provider: WebSearchProvider;
 }> {
   return {
     tavilyKey: (await SecureStore.getItemAsync(TAVILY_KEY_STORE)) ?? '',
-    googleApiKey: (await SecureStore.getItemAsync(GOOGLE_API_KEY_STORE)) ?? '',
     googleCx: (await SecureStore.getItemAsync(GOOGLE_CX_STORE)) ?? '',
     provider: ((await SecureStore.getItemAsync(PROVIDER_KEY)) ?? 'tavily') as WebSearchProvider,
   };
@@ -168,15 +157,17 @@ class TavilyAdapter implements WebSearchAdapter {
 
 class GoogleSearchAdapter implements WebSearchAdapter {
   async search(toolCallId: string, query: string, maxResults: number): Promise<ToolResult> {
-    if (!googleApiKey) {
-      return { toolCallId, name: 'web_search', output: 'Google Search API key not configured. Add it in Settings → Web Search.' };
+    // Reuse the Gemini API key — it's the same Google Cloud key
+    const apiKey = getGeminiKey();
+    if (!apiKey) {
+      return { toolCallId, name: 'web_search', output: 'Google API key not configured. Add your Gemini API key in Settings → AI Model.' };
     }
     if (!googleCx) {
       return { toolCallId, name: 'web_search', output: 'Google Search Engine ID (cx) not configured. Add it in Settings → Web Search.' };
     }
 
     const url = new URL('https://www.googleapis.com/customsearch/v1');
-    url.searchParams.set('key', googleApiKey);
+    url.searchParams.set('key', apiKey);
     url.searchParams.set('cx', googleCx);
     url.searchParams.set('q', query);
     url.searchParams.set('num', String(Math.min(maxResults, 10)));
