@@ -1,11 +1,10 @@
 /**
- * WebSearchClient — factory-pattern web search adapters (Tavily, Google Custom Search).
+ * WebSearchClient — factory-pattern web search adapters (Tavily, Serper.dev).
  * The active provider and API keys are stored in SecureStore and loaded at runtime.
  * To add a new provider: implement WebSearchAdapter, call WebSearchAdapterFactory.register().
  */
 
 import type { ToolDefinition, ToolResult, WebSearchProvider } from '@/types';
-import { getGeminiKey } from '@/services/llm/LLMClient';
 import * as SecureStore from 'expo-secure-store';
 
 // ── Adapter interface ──────────────────────────────────────────────────────
@@ -34,28 +33,28 @@ export class WebSearchAdapterFactory {
 
 const PROVIDER_KEY = 'web_search_provider';
 const TAVILY_KEY_STORE = 'tavily_api_key';
-const GOOGLE_CX_STORE = 'google_search_cx';
+const SERPER_KEY_STORE = 'serper_api_key';
 
 // ── Module-level state ─────────────────────────────────────────────────────
 
 let activeProvider: WebSearchProvider = 'tavily';
 let tavilyKey = '';
-let googleCx = '';
+let serperKey = '';
 
 export function setWebSearchProvider(p: WebSearchProvider) { activeProvider = p; }
 export function getWebSearchProvider(): WebSearchProvider { return activeProvider; }
 export function setTavilyKey(k: string) { tavilyKey = k; }
-export function setGoogleCx(cx: string) { googleCx = cx; }
+export function setSerperKey(k: string) { serperKey = k; }
 
 // ── Config management ──────────────────────────────────────────────────────
 
 export async function loadWebSearchConfig(): Promise<void> {
   const provider = await SecureStore.getItemAsync(PROVIDER_KEY);
   const tKey = await SecureStore.getItemAsync(TAVILY_KEY_STORE);
-  const gCx = await SecureStore.getItemAsync(GOOGLE_CX_STORE);
+  const sKey = await SecureStore.getItemAsync(SERPER_KEY_STORE);
   if (provider) activeProvider = provider as WebSearchProvider;
   if (tKey) tavilyKey = tKey;
-  if (gCx) googleCx = gCx;
+  if (sKey) serperKey = sKey;
 }
 
 export async function saveWebSearchProvider(p: WebSearchProvider): Promise<void> {
@@ -68,19 +67,19 @@ export async function saveTavilyKey(k: string): Promise<void> {
   await SecureStore.setItemAsync(TAVILY_KEY_STORE, k);
 }
 
-export async function saveGoogleCx(cx: string): Promise<void> {
-  googleCx = cx;
-  await SecureStore.setItemAsync(GOOGLE_CX_STORE, cx);
+export async function saveSerperKey(k: string): Promise<void> {
+  serperKey = k;
+  await SecureStore.setItemAsync(SERPER_KEY_STORE, k);
 }
 
 export async function loadStoredWebSearchKeys(): Promise<{
   tavilyKey: string;
-  googleCx: string;
+  serperKey: string;
   provider: WebSearchProvider;
 }> {
   return {
     tavilyKey: (await SecureStore.getItemAsync(TAVILY_KEY_STORE)) ?? '',
-    googleCx: (await SecureStore.getItemAsync(GOOGLE_CX_STORE)) ?? '',
+    serperKey: (await SecureStore.getItemAsync(SERPER_KEY_STORE)) ?? '',
     provider: ((await SecureStore.getItemAsync(PROVIDER_KEY)) ?? 'tavily') as WebSearchProvider,
   };
 }
@@ -153,49 +152,51 @@ class TavilyAdapter implements WebSearchAdapter {
   }
 }
 
-// ── Google Custom Search adapter ───────────────────────────────────────────
+// ── Serper.dev adapter ────────────────────────────────────────────────────
+// Real Google results — 2,500 free queries/month, single API key, no cx needed.
 
-class GoogleSearchAdapter implements WebSearchAdapter {
+class SerperAdapter implements WebSearchAdapter {
   async search(toolCallId: string, query: string, maxResults: number): Promise<ToolResult> {
-    // Reuse the Gemini API key — it's the same Google Cloud key
-    const apiKey = getGeminiKey();
-    if (!apiKey) {
-      return { toolCallId, name: 'web_search', output: 'Google API key not configured. Add your Gemini API key in Settings → AI Model.' };
-    }
-    if (!googleCx) {
-      return { toolCallId, name: 'web_search', output: 'Google Search Engine ID (cx) not configured. Add it in Settings → Web Search.' };
+    if (!serperKey) {
+      return { toolCallId, name: 'web_search', output: 'Serper API key not configured. Add it in Settings → Web Search.' };
     }
 
-    const url = new URL('https://www.googleapis.com/customsearch/v1');
-    url.searchParams.set('key', apiKey);
-    url.searchParams.set('cx', googleCx);
-    url.searchParams.set('q', query);
-    url.searchParams.set('num', String(Math.min(maxResults, 10)));
-
-    const response = await fetch(url.toString());
+    const response = await fetch('https://google.serper.dev/search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-KEY': serperKey,
+      },
+      body: JSON.stringify({ q: query, num: Math.min(maxResults, 10) }),
+    });
 
     if (!response.ok) {
-      if (response.status === 429) throw new Error('Google Search daily quota exceeded (100 queries/day free).');
-      if (response.status === 403) throw new Error('Google Search API key invalid or quota exceeded. Check your key in Settings.');
-      throw new Error(`Google Search ${response.status}`);
+      if (response.status === 429) throw new Error('Serper quota exceeded. Upgrade at serper.dev or try again tomorrow.');
+      if (response.status === 401 || response.status === 403) throw new Error('Serper API key invalid. Check your key in Settings → Web Search.');
+      throw new Error(`Serper ${response.status}`);
     }
 
     const data = await response.json();
-    const items: { title: string; link: string; snippet: string }[] = data.items ?? [];
+    const lines: string[] = [];
 
-    if (items.length === 0) {
-      return { toolCallId, name: 'web_search', output: 'No results found.' };
+    // Answer box — shown for factual queries
+    if (data.answerBox?.answer) {
+      lines.push(`**Answer:** ${data.answerBox.answer}\n`);
+    } else if (data.answerBox?.snippet) {
+      lines.push(`**Answer:** ${data.answerBox.snippet}\n`);
     }
 
-    const lines = items.slice(0, maxResults).map((r, i) =>
-      `${i + 1}. **${r.title}**\n   ${r.link}\n   ${r.snippet?.slice(0, 200) ?? ''}`,
-    );
+    // Organic results
+    const organic: { title: string; link: string; snippet: string }[] = data.organic ?? [];
+    organic.slice(0, maxResults).forEach((r, i) => {
+      lines.push(`${i + 1}. **${r.title}**\n   ${r.link}\n   ${r.snippet?.slice(0, 200) ?? ''}`);
+    });
 
-    return { toolCallId, name: 'web_search', output: lines.join('\n') };
+    return { toolCallId, name: 'web_search', output: lines.join('\n') || 'No results found.' };
   }
 }
 
 // ── Register all adapters ──────────────────────────────────────────────────
 
 WebSearchAdapterFactory.register('tavily', new TavilyAdapter());
-WebSearchAdapterFactory.register('google', new GoogleSearchAdapter());
+WebSearchAdapterFactory.register('serper', new SerperAdapter());
