@@ -5,7 +5,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { useAuth } from '@/hooks/useAuth';
 import { useVault } from '@/hooks/useVault';
-import { clearNotes, getAllNotes, getNoteCount, upsertNote, upsertLinks, updateSemanticSummary, setEmbedding } from '@/services/db/VaultDB';
+import { clearNotes, getAllNotes, getNoteCount, upsertNote, upsertLinks, setEmbedding } from '@/services/db/VaultDB';
 import {
   isModelDownloaded as gloveModelDownloaded,
   downloadModel as gloveDownloadModel,
@@ -225,8 +225,6 @@ export function SettingsScreen() {
   const { authState, userEmail, signIn, signOut } = useAuth();
   const { vaultUri, pickVault, clearVault } = useVault();
   const [indexing, setIndexing] = useState(false);
-  const [enriching, setEnriching] = useState(false);
-  const [enrichProgress, setEnrichProgress] = useState('');
   const [noteCount, setNoteCount] = useState(0);
   const [snack, setSnack] = useState('');
 
@@ -235,8 +233,6 @@ export function SettingsScreen() {
   const [gloveLoaded, setGloveLoaded] = useState(false);
   const [gloveDownloading, setGloveDownloading] = useState(false);
   const [gloveDownloadProgress, setGloveDownloadProgress] = useState(0);
-  const [gloveEmbedding, setGloveEmbedding] = useState(false);
-  const [gloveEmbedProgress, setGloveEmbedProgress] = useState('');
   const [embeddedCount, setEmbeddedCount] = useState(0);
 
   // LLM state
@@ -433,107 +429,31 @@ export function SettingsScreen() {
     }
   }, []);
 
-  const handleDownloadGlove = useCallback(async () => {
-    setGloveDownloading(true);
-    setGloveDownloadProgress(0);
+  const handleReindexAndEmbed = useCallback(async (uri: string) => {
     setOpenModal(null);
-    try {
-      await gloveDownloadModel((p) => setGloveDownloadProgress(Math.round(p * 100)));
-      setGloveDownloaded(true);
-      setSnack('Model downloaded. Loading vocab…');
-      await gloveLoadVocab();
-      setGloveLoaded(gloveReady());
-      setSnack('Semantic search ready! Re-index your vault to generate embeddings.');
-    } catch (e: any) {
-      setSnack(`Download failed: ${e.message}`);
-    } finally {
-      setGloveDownloading(false);
-    }
-  }, []);
-
-  const handleEmbedAllNotes = useCallback(async (uri: string) => {
-    if (!gloveReady()) { setSnack('Model not loaded yet.'); return; }
-    setGloveEmbedding(true);
-    setOpenModal(null);
-    try {
-      const allNotes = await getAllNotes();
-      const toEmbed = allNotes.filter(n => !n.embedding);
-      if (toEmbed.length === 0) { setSnack('All notes already have embeddings.'); return; }
-      const files = await scanVaultForMarkdown(uri);
-      const fileMap = new Map(files.map(f => [f.relativePath, f.uri]));
-      let done = 0;
-      for (const note of toEmbed) {
-        try {
-          const fileUri = fileMap.get(note.id);
-          if (!fileUri) continue;
-          const content = await StorageAccessFramework.readAsStringAsync(fileUri);
-          const parsed = parseNote(content, noteTitle(note.id));
-          const vec = gloveEmbed(parsed.body);
-          if (vec) await setEmbedding(note.id, Array.from(vec));
-        } catch { /* skip */ }
-        done++;
-        setGloveEmbedProgress(`${done} / ${toEmbed.length}`);
-      }
-      setEmbeddedCount(done);
-      setSnack(`Embeddings generated for ${done} notes.`);
-    } catch (e: any) {
-      setSnack(`Embedding failed: ${e.message}`);
-    } finally {
-      setGloveEmbedding(false);
-      setGloveEmbedProgress('');
-    }
-  }, []);
-
-  const enrichWithAI = useCallback(async (uri: string) => {
-    setEnriching(true);
-    setOpenModal(null);
-    try {
-      const allNotes = await getAllNotes();
-      // Only enrich notes that don't already have a semantic summary and aren't daily/conversation
-      const toEnrich = allNotes.filter(n =>
-        !n.semanticSummary && !['daily', 'conversation'].includes(n.type ?? ''),
-      );
-
-      if (toEnrich.length === 0) {
-        setSnack('All notes already have AI summaries.');
+    // Download & load model if not already available
+    if (!gloveDownloaded) {
+      setGloveDownloading(true);
+      setGloveDownloadProgress(0);
+      try {
+        await gloveDownloadModel((p) => setGloveDownloadProgress(Math.round(p * 100)));
+        setGloveDownloaded(true);
+        await gloveLoadVocab();
+        setGloveLoaded(gloveReady());
+      } catch (e: any) {
+        setSnack(`Download failed: ${e.message}`);
+        setGloveDownloading(false);
         return;
       }
-
-      const files = await scanVaultForMarkdown(uri);
-      const fileMap = new Map(files.map(f => [f.relativePath, f.uri]));
-
-      const BATCH = 5;
-      let done = 0;
-      for (let i = 0; i < toEnrich.length; i += BATCH) {
-        const batch = toEnrich.slice(i, i + BATCH);
-        await Promise.all(batch.map(async (note) => {
-          try {
-            const fileUri = fileMap.get(note.id);
-            if (!fileUri) return;
-            const content = await StorageAccessFramework.readAsStringAsync(fileUri);
-            const parsed = parseNote(content, noteTitle(note.id));
-            const { generateSemanticSummary } = await import('@/services/llm/SemanticSummarizer');
-            const summary = await generateSemanticSummary(content, parsed.title);
-            await updateSemanticSummary(note.id, summary);
-          } catch {
-            // Skip notes that fail — continue with the rest
-          }
-        }));
-        done += batch.length;
-        setEnrichProgress(`${done} / ${toEnrich.length}`);
-        // Small pause between batches to avoid rate-limit bursts
-        if (i + BATCH < toEnrich.length) {
-          await new Promise(r => setTimeout(r, 500));
-        }
-      }
-      setSnack(`AI summaries added to ${done} notes.`);
-    } catch (e: any) {
-      setSnack(`Enrichment failed: ${e.message}`);
-    } finally {
-      setEnriching(false);
-      setEnrichProgress('');
+      setGloveDownloading(false);
+    } else if (!gloveLoaded) {
+      await gloveLoadVocab();
+      setGloveLoaded(gloveReady());
     }
-  }, []);
+    await rebuildIndex(uri);
+  }, [gloveDownloaded, gloveLoaded, rebuildIndex]);
+
+
 
   const handlePickVault = useCallback(async () => {
     try {
@@ -675,18 +595,12 @@ export function SettingsScreen() {
           <SettingRow
             icon="folder-outline"
             label="Vault"
-            value={vaultUri ? (noteCount > 0 ? `${noteCount} notes indexed` : 'Connected') : 'Not connected'}
-            onPress={() => setOpenModal('vault')}
-          />
-          <View style={styles.cardDivider} />
-          <SettingRow
-            icon="brain"
-            label="Semantic Search"
             value={
-              !gloveDownloaded ? 'Model not downloaded' :
-              !gloveLoaded ? 'Model downloaded, not loaded' :
-              embeddedCount === 0 ? 'Loaded — no embeddings yet (rebuild index)' :
-              `Loaded · ${embeddedCount}/${noteCount} notes embedded`
+              !vaultUri ? 'Not connected' :
+              noteCount === 0 ? 'Connected · not indexed' :
+              !gloveDownloaded ? `${noteCount} notes · no semantic model` :
+              embeddedCount === 0 ? `${noteCount} notes · no embeddings yet` :
+              `${noteCount} notes · ${embeddedCount} embeddings`
             }
             onPress={() => setOpenModal('vault')}
           />
@@ -833,14 +747,11 @@ export function SettingsScreen() {
 
           {vaultUri ? (
             <>
-              {/* Re-index */}
+              {/* Re-index + Semantic Search (combined) */}
               <TouchableOpacity
                 style={styles.vaultActionRow}
-                activeOpacity={0.7}
-                onPress={() => {
-                  setOpenModal(null);
-                  rebuildIndex(vaultUri);
-                }}
+                activeOpacity={(indexing || gloveDownloading) ? 1 : 0.7}
+                onPress={() => { if (!indexing && !gloveDownloading) handleReindexAndEmbed(vaultUri); }}
               >
                 <View style={styles.vaultActionIcon}>
                   <MaterialCommunityIcons name="folder-refresh-outline" size={20} color="#6D28D9" />
@@ -848,76 +759,18 @@ export function SettingsScreen() {
                 <View style={styles.vaultActionText}>
                   <Text style={styles.vaultActionLabel}>Re-index Vault</Text>
                   <Text style={styles.vaultActionDesc}>
-                    {indexing ? 'Indexing…' : noteCount > 0 ? `${noteCount} notes currently indexed` : 'Scan vault and rebuild index'}
+                    {gloveDownloading
+                      ? `Downloading semantic model… ${gloveDownloadProgress}%`
+                      : indexing
+                        ? 'Indexing…'
+                        : !gloveDownloaded
+                          ? `${noteCount > 0 ? `${noteCount} notes indexed` : 'Not indexed yet'} · will download semantic model on first run`
+                          : noteCount > 0
+                            ? `${noteCount} notes · ${embeddedCount} embeddings`
+                            : 'Scan vault and rebuild index with semantic embeddings'}
                   </Text>
                 </View>
               </TouchableOpacity>
-
-              <View style={styles.vaultActionDivider} />
-
-              {/* Enrich with AI summaries */}
-              <TouchableOpacity
-                style={styles.vaultActionRow}
-                activeOpacity={enriching ? 1 : 0.7}
-                onPress={() => {
-                  if (!enriching) enrichWithAI(vaultUri);
-                }}
-              >
-                <View style={styles.vaultActionIcon}>
-                  <MaterialCommunityIcons name="brain" size={20} color="#6D28D9" />
-                </View>
-                <View style={styles.vaultActionText}>
-                  <Text style={styles.vaultActionLabel}>Enrich with AI Summaries</Text>
-                  <Text style={styles.vaultActionDesc}>
-                    {enriching
-                      ? `Generating… ${enrichProgress}`
-                      : 'Add semantic descriptions to existing notes (used for search)'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-
-              <View style={styles.vaultActionDivider} />
-
-              {/* Semantic search (GloVe) */}
-              {!gloveDownloaded ? (
-                <TouchableOpacity
-                  style={styles.vaultActionRow}
-                  activeOpacity={gloveDownloading ? 1 : 0.7}
-                  onPress={() => { if (!gloveDownloading) handleDownloadGlove(); }}
-                >
-                  <View style={styles.vaultActionIcon}>
-                    <MaterialCommunityIcons name="vector-combine" size={20} color="#6D28D9" />
-                  </View>
-                  <View style={styles.vaultActionText}>
-                    <Text style={styles.vaultActionLabel}>Download Semantic Search</Text>
-                    <Text style={styles.vaultActionDesc}>
-                      {gloveDownloading
-                        ? `Downloading… ${gloveDownloadProgress}%`
-                        : 'One-time ~7MB download for offline word embeddings'}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              ) : (
-                <TouchableOpacity
-                  style={styles.vaultActionRow}
-                  activeOpacity={gloveEmbedding ? 1 : 0.7}
-                  onPress={() => { if (!gloveEmbedding && vaultUri) handleEmbedAllNotes(vaultUri); }}
-                >
-                  <View style={styles.vaultActionIcon}>
-                    <MaterialCommunityIcons name="vector-combine" size={20} color="#6D28D9" />
-                  </View>
-                  <View style={styles.vaultActionText}>
-                    <Text style={styles.vaultActionLabel}>Semantic Search</Text>
-                    <Text style={styles.vaultActionDesc}>
-                      {gloveEmbedding
-                        ? `Generating embeddings… ${gloveEmbedProgress}`
-                        : gloveLoaded
-                          ? 'Active — tap to regenerate embeddings for all notes'
-                          : 'Loading model into memory…'}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              )}
 
               <View style={styles.vaultActionDivider} />
 

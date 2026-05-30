@@ -1,4 +1,4 @@
-import { StorageAccessFramework, getInfoAsync } from 'expo-file-system/legacy';
+import { StorageAccessFramework } from 'expo-file-system/legacy';
 
 export type ScannedFile = {
   uri: string;
@@ -29,15 +29,15 @@ async function scanDir(
 
     const relativePath = relativePrefix ? `${relativePrefix}/${name}` : name;
 
-    try {
-      const info = await getInfoAsync(uri);
-      if (info.isDirectory) {
+    if (name.endsWith('.md')) {
+      results.push({ uri, relativePath });
+    } else if (!name.includes('.')) {
+      // No extension — likely a directory; recurse
+      try {
         await scanDir(uri, relativePath, results);
-      } else if (name.endsWith('.md')) {
-        results.push({ uri, relativePath });
+      } catch {
+        // not a directory or unreadable — skip
       }
-    } catch {
-      // skip unreadable entries
     }
   }
 }
