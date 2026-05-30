@@ -119,17 +119,27 @@ export function useConversation(sttMode: STTMode = 'native', initialMode?: Conve
     setTranscript(updated);
   }, []);
 
-  const { state: voiceState, startListening, stopListening, postCorrect, reset: resetVoice } = useVoice(
+  const { state: voiceState, error: voiceError, startListening, stopListening, postCorrect, reset: resetVoice } = useVoice(
     handleAppend, handleFinalAppend, sttMode,
   );
 
   const isRecording = voiceState === 'listening';
 
+  // Surface voice errors (permission denied, recognizer unavailable, etc.) to the UI
+  useEffect(() => {
+    if (voiceError) setError(voiceError);
+  }, [voiceError]);
+
   const toggleRecording = useCallback(async () => {
-    if (isRecording) {
-      await stopListening();
-    } else {
-      await startListening();
+    setError(null);
+    try {
+      if (isRecording) {
+        await stopListening();
+      } else {
+        await startListening();
+      }
+    } catch (e: any) {
+      setError(e?.message ?? 'Microphone error. Check permissions in device Settings.');
     }
   }, [isRecording, startListening, stopListening]);
 
