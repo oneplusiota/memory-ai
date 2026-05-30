@@ -2,8 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   FlatList,
-  KeyboardAvoidingView,
-  Platform,
+  Keyboard,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -40,6 +39,21 @@ export function ConversationScreen() {
   const [sttMode, setSttMode] = useState<STTMode>('native');
   const flatListRef = useRef<FlatList>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const keyboardHeight = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', (e) => {
+      Animated.timing(keyboardHeight, {
+        toValue: e.endCoordinates.height + 12,
+        duration: 150,
+        useNativeDriver: false,
+      }).start();
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => {
+      Animated.timing(keyboardHeight, { toValue: 0, duration: 150, useNativeDriver: false }).start();
+    });
+    return () => { show.remove(); hide.remove(); };
+  }, [keyboardHeight]);
 
   useEffect(() => {
     SecureStore.getItemAsync(STT_MODE_KEY).then((v) => {
@@ -111,11 +125,7 @@ export function ConversationScreen() {
   const hasText = transcript.trim().length > 0;
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
-      keyboardVerticalOffset={0}
-    >
+    <Animated.View style={[styles.container, { paddingBottom: keyboardHeight }]}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>memory.ai</Text>
@@ -241,7 +251,7 @@ export function ConversationScreen() {
           ) : null}
         </View>
       </View>
-    </KeyboardAvoidingView>
+    </Animated.View>
   );
 }
 
