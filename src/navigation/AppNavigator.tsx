@@ -8,6 +8,7 @@ import { SettingsScreen } from '@/screens/SettingsScreen';
 import { ConfirmUpdateScreen } from '@/screens/ConfirmUpdateScreen';
 import { HistoryScreen } from '@/screens/HistoryScreen';
 import { ConversationDetailScreen } from '@/screens/ConversationDetailScreen';
+import { ToolsScreen } from '@/screens/ToolsScreen';
 import type { RoutingDecision } from '@/types';
 
 export type RootStackParamList = {
@@ -16,6 +17,7 @@ export type RootStackParamList = {
   Confirm: { decision: RoutingDecision; vaultUri: string; conversationFilePath?: string };
   History: undefined;
   ConversationDetail: { relativePath: string };
+  Tools: undefined;
 };
 
 const Stack = createStackNavigator<RootStackParamList>();
@@ -49,6 +51,7 @@ export function AppNavigator() {
       <Stack.Screen name="Confirm" component={ConfirmUpdateScreen} options={{ title: 'Confirm Update' }} />
       <Stack.Screen name="History" component={HistoryScreen} options={{ title: 'Conversation History' }} />
       <Stack.Screen name="ConversationDetail" component={ConversationDetailScreen} options={{ title: 'Conversation' }} />
+      <Stack.Screen name="Tools" component={ToolsScreen} options={{ title: 'My Tools' }} />
     </Stack.Navigator>
   );
 }

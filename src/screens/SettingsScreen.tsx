@@ -16,8 +16,14 @@ import {
   saveGeminiKey, saveGroqKey, saveActiveProvider,
   saveGeminiModelPref, loadStoredKeys,
 } from '@/services/gemini/GeminiClient';
-import type { LLMProvider, STTMode } from '@/types';
+import {
+  saveWebSearchProvider, saveTavilyKey, saveBraveKey,
+  loadStoredWebSearchKeys,
+} from '@/services/tools/WebSearchClient';
+import type { AgentMode, LLMProvider, STTMode, WebSearchProvider } from '@/types';
 import * as SecureStore from 'expo-secure-store';
+
+const AGENT_MODE_KEY = 'agent_mode';
 
 const STT_MODE_KEY = 'stt_mode';
 
@@ -78,6 +84,16 @@ export function SettingsScreen() {
   const [groqKeyInput, setGroqKeyInput] = useState('');
   const [groqKeySaved, setGroqKeySaved] = useState(false);
   const [geminiModel, setGeminiModelState] = useState('gemini-2.0-flash');
+
+  // Web search state
+  const [webSearchProvider, setWebSearchProviderState] = useState<WebSearchProvider>('tavily');
+  const [tavilyKeyInput, setTavilyKeyInput] = useState('');
+  const [tavilyKeySaved, setTavilyKeySaved] = useState(false);
+  const [braveKeyInput, setBraveKeyInput] = useState('');
+  const [braveKeySaved, setBraveKeySaved] = useState(false);
+
+  // Agent mode state
+  const [agentMode, setAgentModeState] = useState<AgentMode>('agentic');
   const [sttMode, setSttModeState] = useState<STTMode>('native');
 
   useEffect(() => {
@@ -89,6 +105,14 @@ export function SettingsScreen() {
       setGeminiModelState(gm);
       const mode = await SecureStore.getItemAsync(STT_MODE_KEY);
       if (mode) setSttModeState(mode as STTMode);
+
+      // Load web search + agent settings
+      const { tavilyKey, braveKey, provider: wsp } = await loadStoredWebSearchKeys();
+      if (tavilyKey) { setTavilyKeyInput(tavilyKey); setTavilyKeySaved(true); }
+      if (braveKey) { setBraveKeyInput(braveKey); setBraveKeySaved(true); }
+      setWebSearchProviderState(wsp);
+      const am = await SecureStore.getItemAsync(AGENT_MODE_KEY);
+      if (am) setAgentModeState(am as AgentMode);
     })();
   }, []);
 
@@ -122,6 +146,33 @@ export function SettingsScreen() {
   const changeSttMode = useCallback(async (mode: STTMode) => {
     setSttModeState(mode);
     await SecureStore.setItemAsync(STT_MODE_KEY, mode);
+  }, []);
+
+  const handleSaveTavilyKey = useCallback(async () => {
+    const key = tavilyKeyInput.trim();
+    if (!key) return;
+    await saveTavilyKey(key);
+    setTavilyKeySaved(true);
+    setSnack('Tavily API key saved.');
+  }, [tavilyKeyInput]);
+
+  const handleSaveBraveKey = useCallback(async () => {
+    const key = braveKeyInput.trim();
+    if (!key) return;
+    await saveBraveKey(key);
+    setBraveKeySaved(true);
+    setSnack('Brave Search API key saved.');
+  }, [braveKeyInput]);
+
+  const handleSelectWebSearchProvider = useCallback(async (p: WebSearchProvider) => {
+    setWebSearchProviderState(p);
+    await saveWebSearchProvider(p);
+    setSnack(`Web search set to ${p === 'tavily' ? 'Tavily' : 'Brave'}.`);
+  }, []);
+
+  const handleSelectAgentMode = useCallback(async (m: AgentMode) => {
+    setAgentModeState(m);
+    await SecureStore.setItemAsync(AGENT_MODE_KEY, m);
   }, []);
 
   const rebuildIndex = useCallback(async (uri: string) => {
@@ -259,6 +310,96 @@ export function SettingsScreen() {
           onPress={() => changeSttMode(opt.value)}
         />
       ))}
+
+      <Divider />
+
+      {/* ── WEB SEARCH ── */}
+      <SectionHeader title="WEB SEARCH" />
+
+      <View style={styles.providerRow}>
+        {(['tavily', 'brave'] as WebSearchProvider[]).map((p) => (
+          <TouchableOpacity
+            key={p}
+            style={[styles.providerTab, webSearchProvider === p && styles.providerTabActive]}
+            onPress={() => handleSelectWebSearchProvider(p)}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.providerTabText, webSearchProvider === p && styles.providerTabTextActive]}>
+              {p === 'tavily' ? 'Tavily' : 'Brave'}
+            </Text>
+            <Text style={[styles.providerTabDesc, webSearchProvider === p && styles.providerTabDescActive]}>
+              {p === 'tavily' ? '1,000 req/mo free' : '2,000 req/mo free'}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {webSearchProvider === 'tavily' && (
+        <View style={styles.keyRow}>
+          <TextInput
+            mode="outlined"
+            label="Tavily API Key"
+            value={tavilyKeyInput}
+            onChangeText={(t) => { setTavilyKeyInput(t); setTavilyKeySaved(false); }}
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={styles.keyInput}
+            dense
+          />
+          <Button
+            mode="contained"
+            onPress={handleSaveTavilyKey}
+            disabled={!tavilyKeyInput.trim() || tavilyKeySaved}
+            style={styles.keyBtn}
+            compact
+          >
+            {tavilyKeySaved ? '✓' : 'Save'}
+          </Button>
+        </View>
+      )}
+
+      {webSearchProvider === 'brave' && (
+        <View style={styles.keyRow}>
+          <TextInput
+            mode="outlined"
+            label="Brave Search API Key"
+            value={braveKeyInput}
+            onChangeText={(t) => { setBraveKeyInput(t); setBraveKeySaved(false); }}
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={styles.keyInput}
+            dense
+          />
+          <Button
+            mode="contained"
+            onPress={handleSaveBraveKey}
+            disabled={!braveKeyInput.trim() || braveKeySaved}
+            style={styles.keyBtn}
+            compact
+          >
+            {braveKeySaved ? '✓' : 'Save'}
+          </Button>
+        </View>
+      )}
+
+      <Divider />
+
+      {/* ── AGENT MODE ── */}
+      <SectionHeader title="AGENT MODE" />
+      <RadioRow
+        label="Agentic loop"
+        desc="AI calls tools in sequence until it has a full answer"
+        selected={agentMode === 'agentic'}
+        onPress={() => handleSelectAgentMode('agentic')}
+      />
+      <RadioRow
+        label="Single call"
+        desc="AI calls one round of tools, then shows partial results"
+        selected={agentMode === 'single'}
+        onPress={() => handleSelectAgentMode('single')}
+      />
 
       <Divider />
 

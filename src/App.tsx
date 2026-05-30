@@ -6,6 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { AppNavigator } from '@/navigation/AppNavigator';
 import { loadAllProviderConfig } from '@/services/gemini/GeminiClient';
+import { loadWebSearchConfig } from '@/services/tools/WebSearchClient';
 import { loadIndex } from '@/services/indexer/IndexStore';
 
 const theme = {
@@ -22,6 +23,7 @@ const theme = {
 export default function App() {
   useEffect(() => {
     loadAllProviderConfig();
+    loadWebSearchConfig();
     loadIndex();
   }, []);
 

@@ -4,10 +4,19 @@ import { useVault } from './useVault';
 import { hybridSearch } from '@/services/search/HybridSearch';
 import { getIndex } from '@/services/indexer/IndexStore';
 import { chat, saveConversation } from '@/services/gemini/ConversationClient';
+import { buildSystemPrompt } from '@/services/gemini/ConversationPrompt';
 import { saveConversationFile, readConversationMessages, overwriteConversationFile, readLifeContext } from '@/services/vault/VaultWriter';
 import { refreshLifeContext } from '@/services/llm/LifeContextClient';
-import type { ConversationMessage, ConversationMode, RoutingDecision, STTMode } from '@/types';
+import { agentChat } from '@/services/tools/AgentClient';
+import type { ToolStepEvent } from '@/services/tools/AgentClient';
+import { BUILTIN_TOOL_DEFINITIONS } from '@/services/tools/BuiltinTools';
+import { WEB_SEARCH_TOOL_DEFINITION } from '@/services/tools/WebSearchClient';
+import { CALENDAR_TOOL_DEFINITIONS } from '@/services/tools/CalendarClient';
+import { loadCustomTools } from '@/services/tools/ToolRegistry';
+import type { AgentMode, ConversationMessage, ConversationMode, RoutingDecision, STTMode, ToolDefinition } from '@/types';
 import * as SecureStore from 'expo-secure-store';
+
+const AGENT_MODE_KEY = 'agent_mode';
 
 const CONVERSATION_MODE_KEY = 'conversation_mode';
 
@@ -47,6 +56,40 @@ export function useConversation(sttMode: STTMode = 'native') {
     if (!vaultUri) return;
     readLifeContext(vaultUri).then(ctx => { lifeContextRef.current = ctx; }).catch(() => {});
   }, [vaultUri]);
+
+  // ── Agent / tools state ──────────────────────────────────────────────────
+  const [agentMode, setAgentModeState] = useState<AgentMode>('agentic');
+  const [customTools, setCustomTools] = useState<ToolDefinition[]>([]);
+  const [toolSteps, setToolSteps] = useState<ToolStepEvent[]>([]);
+  const confirmCallbackRef = useRef<((confirmed: boolean) => void) | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    toolName: string;
+    path: string;
+    content: string;
+  } | null>(null);
+
+  // Load agent settings and custom tools when vault is ready
+  useEffect(() => {
+    SecureStore.getItemAsync(AGENT_MODE_KEY).then(v => {
+      if (v) setAgentModeState(v as AgentMode);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!vaultUri) return;
+    loadCustomTools(vaultUri).then(setCustomTools).catch(() => {});
+  }, [vaultUri]);
+
+  const setAgentMode = useCallback(async (mode: AgentMode) => {
+    setAgentModeState(mode);
+    await SecureStore.setItemAsync(AGENT_MODE_KEY, mode);
+  }, []);
+
+  const confirmToolWrite = useCallback((confirmed: boolean) => {
+    confirmCallbackRef.current?.(confirmed);
+    confirmCallbackRef.current = null;
+    setPendingConfirm(null);
+  }, []);
 
   const baseRef = useRef('');
   const [transcript, setTranscript] = useState('');
@@ -116,21 +159,56 @@ export function useConversation(sttMode: STTMode = 'native') {
     messagesRef.current = withUser;
 
     try {
-      const index = getIndex();
-      const results = hybridSearch(index, finalText, undefined, 5);
-      const notes = results.map((r) => r.note);
+      setToolSteps([]);
 
-      const allAtoms = Object.values(index.notes).filter(n => n.id.startsWith('atoms/'));
+      // tool_builder mode always uses the standard chat path (no tool calling)
+      const useToolCalling = conversationMode !== 'tool_builder' && vaultUri;
 
-      const response = await chat(withUser, notes, finalText, allAtoms, lifeContextRef.current ?? undefined, conversationMode);
+      let replyText: string;
+
+      if (useToolCalling) {
+        const allTools: ToolDefinition[] = [
+          ...BUILTIN_TOOL_DEFINITIONS,
+          WEB_SEARCH_TOOL_DEFINITION,
+          ...CALENDAR_TOOL_DEFINITIONS,
+          ...customTools,
+        ];
+
+        replyText = await agentChat(
+          withUser.slice(0, -1), // history without the new user msg (agentChat appends it)
+          finalText,
+          buildSystemPrompt(conversationMode),
+          allTools,
+          vaultUri,
+          customTools,
+          agentMode,
+          {
+            onStep: (event) => setToolSteps(prev => [...prev, event]),
+            onConfirmRequired: (toolName, path, content) =>
+              new Promise<boolean>((resolve) => {
+                confirmCallbackRef.current = resolve;
+                setPendingConfirm({ toolName, path, content });
+              }),
+          },
+        );
+        setLastSuggestSave(false);
+      } else {
+        const index = getIndex();
+        const results = hybridSearch(index, finalText, undefined, 5);
+        const notes = results.map((r) => r.note);
+        const allAtoms = Object.values(index.notes).filter(n => n.id.startsWith('atoms/'));
+        const response = await chat(withUser, notes, finalText, allAtoms, lifeContextRef.current ?? undefined, conversationMode);
+        replyText = response.reply;
+        setLastSuggestSave(response.suggest_save);
+      }
+
       const aiMsg: ConversationMessage = {
-        id: mkId(), role: 'assistant', text: response.reply, timestamp: Date.now(),
+        id: mkId(), role: 'assistant', text: replyText, timestamp: Date.now(),
       };
       const withAI = [...withUser, aiMsg];
       setMessages(withAI);
       messagesRef.current = withAI;
       autosave(withAI);
-      setLastSuggestSave(response.suggest_save);
 
       // Refresh life context in background every 5 user messages
       const userMsgCount = withAI.filter(m => m.role === 'user').length;
@@ -145,7 +223,7 @@ export function useConversation(sttMode: STTMode = 'native') {
       setIsSending(false);
       resetVoice();
     }
-  }, [sttMode, postCorrect, resetVoice, autosave, conversationMode, vaultUri]);
+  }, [sttMode, postCorrect, resetVoice, autosave, conversationMode, vaultUri, agentMode, customTools]);
 
   const saveToVault = useCallback(async (): Promise<{
     decision: RoutingDecision;
@@ -212,6 +290,12 @@ export function useConversation(sttMode: STTMode = 'native') {
     lastSuggestSave,
     conversationMode,
     setConversationMode,
+    agentMode,
+    setAgentMode,
+    customTools,
+    toolSteps,
+    pendingConfirm,
+    confirmToolWrite,
     handleTranscriptChange,
     toggleRecording,
     sendMessage,

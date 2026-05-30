@@ -27,6 +27,7 @@ const MODES: { id: ConversationMode; label: string }[] = [
   { id: 'coach', label: 'Coach' },
   { id: 'analyst', label: 'Analyst' },
   { id: 'devil', label: "Devil's Advocate" },
+  { id: 'tool_builder', label: '🔧 Tool Builder' },
 ];
 
 type Nav = StackNavigationProp<RootStackParamList, 'Conversation'>;
@@ -64,6 +65,7 @@ export function ConversationScreen() {
   const {
     messages, transcript, isRecording, isSending, error,
     lastSuggestSave, conversationMode, setConversationMode,
+    toolSteps, pendingConfirm, confirmToolWrite,
     handleTranscriptChange, toggleRecording,
     sendMessage, saveToVault, loadConversation, persistConversation, clearConversation,
   } = useConversation(sttMode);
@@ -135,6 +137,9 @@ export function ConversationScreen() {
               <MaterialCommunityIcons name="plus" size={22} color="#374151" />
             </TouchableOpacity>
           )}
+          <TouchableOpacity onPress={() => navigation.navigate('Tools')} style={styles.headerBtn}>
+            <MaterialCommunityIcons name="tools" size={22} color="#374151" />
+          </TouchableOpacity>
           <TouchableOpacity onPress={() => navigation.navigate('History')} style={styles.headerBtn}>
             <MaterialCommunityIcons name="clock-outline" size={22} color="#374151" />
           </TouchableOpacity>
@@ -203,6 +208,39 @@ export function ConversationScreen() {
         </View>
       )}
 
+      {/* Tool steps strip — shown while agent is running */}
+      {isSending && toolSteps.length > 0 && (
+        <View style={styles.toolStepsBar}>
+          <Text style={styles.toolStepText} numberOfLines={1}>
+            {toolSteps[toolSteps.length - 1].type === 'tool_call'
+              ? `⚙️ Calling ${toolSteps[toolSteps.length - 1].name}…`
+              : `✓ ${toolSteps[toolSteps.length - 1].name}`}
+          </Text>
+        </View>
+      )}
+
+      {/* Tool write confirmation modal */}
+      {!!pendingConfirm && (
+        <View style={styles.confirmOverlay}>
+          <View style={styles.confirmCard}>
+            <Text style={styles.confirmTitle}>Allow write?</Text>
+            <Text style={styles.confirmDesc}>
+              {pendingConfirm.toolName === 'create_event'
+                ? `Create calendar event: ${pendingConfirm.path}`
+                : `Write to "${pendingConfirm.path}"`}
+            </Text>
+            <View style={styles.confirmBtns}>
+              <Pressable style={[styles.confirmBtn, styles.confirmDeny]} onPress={() => confirmToolWrite(false)}>
+                <Text style={styles.confirmDenyText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={[styles.confirmBtn, styles.confirmAllow]} onPress={() => confirmToolWrite(true)}>
+                <Text style={styles.confirmAllowText}>Allow</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      )}
+
       {/* Input bar — buttons live inside the rounded input box */}
       <View style={styles.inputBar}>
         <View style={styles.inputWrapper}>
@@ -257,6 +295,29 @@ export function ConversationScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FFFFFF' },
+
+  toolStepsBar: {
+    backgroundColor: '#F5F3FF', paddingHorizontal: 16, paddingVertical: 6,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#DDD6FE',
+  },
+  toolStepText: { fontSize: 12, color: '#7C3AED' },
+
+  confirmOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', zIndex: 99,
+  },
+  confirmCard: {
+    backgroundColor: '#FFFFFF', borderRadius: 16, padding: 20, marginHorizontal: 32,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8,
+  },
+  confirmTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 8 },
+  confirmDesc: { fontSize: 14, color: '#6B7280', marginBottom: 16 },
+  confirmBtns: { flexDirection: 'row', gap: 10, justifyContent: 'flex-end' },
+  confirmBtn: { paddingHorizontal: 18, paddingVertical: 9, borderRadius: 8 },
+  confirmDeny: { backgroundColor: '#F3F4F6' },
+  confirmDenyText: { color: '#374151', fontWeight: '600', fontSize: 14 },
+  confirmAllow: { backgroundColor: '#6D28D9' },
+  confirmAllowText: { color: '#FFFFFF', fontWeight: '600', fontSize: 14 },
 
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
