@@ -19,6 +19,8 @@ export function useVoice(
   const [error, setError] = useState<string | null>(null);
   // Track whether the user explicitly stopped — prevents auto-restart after manual stop
   const userStoppedRef = useRef(false);
+  // Track any pending auto-restart timer so we can cancel it on manual stop
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
@@ -29,6 +31,8 @@ export function useVoice(
 
   useSpeechRecognitionEvent('result', (event) => {
     if (sttMode !== 'native' && sttMode !== 'native-corrected') return;
+    // Drop in-flight results that arrive after the user has stopped
+    if (userStoppedRef.current) return;
     const segment = event.results[0]?.transcript ?? '';
     if (event.isFinal) {
       onFinalAppend(segment);
@@ -44,30 +48,42 @@ export function useVoice(
       setState('done');
     } else {
       // Android stopped due to silence timeout — restart silently to keep mic open
-      ExpoSpeechRecognitionModule.start({
-        lang: 'en-US',
-        interimResults: true,
-        continuous: true,
-      });
+      restartTimerRef.current = setTimeout(() => {
+        restartTimerRef.current = null;
+        ExpoSpeechRecognitionModule.start({
+          lang: 'en-US',
+          interimResults: true,
+          continuous: true,
+        });
+      }, 300);
     }
   });
 
   useSpeechRecognitionEvent('error', (event) => {
     if (sttMode !== 'native' && sttMode !== 'native-corrected') return;
     const code = (event as any).code ?? '';
-    // 'no-speech' and 'aborted' are normal — don't surface as errors, just restart
-    if (!userStoppedRef.current && (code === 'no-speech' || code === 'aborted' || code === 7)) {
-      ExpoSpeechRecognitionModule.start({
-        lang: 'en-US',
-        interimResults: true,
-        continuous: true,
-      });
+    // Recoverable conditions — don't surface as errors, just restart silently
+    const recoverable =
+      code === 'no-speech' ||
+      code === 'aborted' ||
+      code === 7 ||
+      code === 'network' ||
+      code === 6;
+    if (!userStoppedRef.current && recoverable) {
+      restartTimerRef.current = setTimeout(() => {
+        restartTimerRef.current = null;
+        ExpoSpeechRecognitionModule.start({
+          lang: 'en-US',
+          interimResults: true,
+          continuous: true,
+        });
+      }, 300);
       return;
     }
     if (!userStoppedRef.current) {
       setError(event.message ?? 'Speech recognition error');
     }
-    setState(userStoppedRef.current ? 'done' : 'error');
+    setState(userStoppedRef.current ? 'done' : 'idle');
   });
 
   // ── Start listening ────────────────────────────────────────────
@@ -102,6 +118,11 @@ export function useVoice(
 
   // ── Stop listening (user-initiated) ───────────────────────────
   const stopListening = useCallback(async () => {
+    // Cancel any pending auto-restart before marking as stopped
+    if (restartTimerRef.current !== null) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
     userStoppedRef.current = true;
 
     if (sttMode === 'gemini-audio') {
@@ -136,6 +157,10 @@ export function useVoice(
   }, [sttMode]);
 
   const reset = useCallback(() => {
+    if (restartTimerRef.current !== null) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
     userStoppedRef.current = true;
     setState('idle');
     setError(null);

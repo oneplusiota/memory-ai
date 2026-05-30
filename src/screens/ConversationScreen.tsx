@@ -5,6 +5,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   TextInput,
   TouchableOpacity,
@@ -19,7 +20,14 @@ import * as SecureStore from 'expo-secure-store';
 import { ChatBubble } from '@/components/ChatBubble';
 import { useConversation } from '@/hooks/useConversation';
 import type { RootStackParamList } from '@/navigation/AppNavigator';
-import type { STTMode } from '@/types';
+import type { ConversationMode, STTMode } from '@/types';
+
+const MODES: { id: ConversationMode; label: string }[] = [
+  { id: 'journal', label: 'Journal' },
+  { id: 'coach', label: 'Coach' },
+  { id: 'analyst', label: 'Analyst' },
+  { id: 'devil', label: "Devil's Advocate" },
+];
 
 type Nav = StackNavigationProp<RootStackParamList, 'Conversation'>;
 const STT_MODE_KEY = 'stt_mode';
@@ -38,22 +46,23 @@ export function ConversationScreen() {
 
   const {
     messages, transcript, isRecording, isSending, error,
-    lastSuggestSave, handleTranscriptChange, toggleRecording,
+    lastSuggestSave, conversationMode, setConversationMode,
+    handleTranscriptChange, toggleRecording,
     sendMessage, saveToVault, persistConversation, clearConversation,
   } = useConversation(sttMode);
 
-  // Pulsing animation for recording button
+  // Pulsing animation for mic icon while recording
   useEffect(() => {
     if (isRecording) {
       Animated.loop(
         Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.2, duration: 500, useNativeDriver: true }),
-          Animated.timing(pulseAnim, { toValue: 1.0, duration: 500, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1.3, duration: 600, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1.0, duration: 600, useNativeDriver: true }),
         ]),
       ).start();
     } else {
       pulseAnim.stopAnimation();
-      Animated.timing(pulseAnim, { toValue: 1.0, duration: 150, useNativeDriver: true }).start();
+      Animated.timing(pulseAnim, { toValue: 1.0, duration: 100, useNativeDriver: true }).start();
     }
   }, [isRecording, pulseAnim]);
 
@@ -88,42 +97,6 @@ export function ConversationScreen() {
   };
 
   const hasText = transcript.trim().length > 0;
-  const canSend = hasText && !isRecording && !isSending;
-
-  const renderInputButton = () => {
-    if (isSending) {
-      return (
-        <View style={[styles.circleBtn, styles.circleBtnDisabled]}>
-          <ActivityIndicator size={18} color="#FFFFFF" />
-        </View>
-      );
-    }
-    if (isRecording) {
-      return (
-        <Pressable onPress={toggleRecording}>
-          <Animated.View style={[styles.circleBtn, styles.circleBtnRed, { transform: [{ scale: pulseAnim }] }]}>
-            <View style={styles.stopSquare} />
-          </Animated.View>
-        </Pressable>
-      );
-    }
-    if (canSend) {
-      return (
-        <Pressable onPress={handleSend}>
-          <View style={[styles.circleBtn, styles.circleBtnPurple]}>
-            <MaterialCommunityIcons name="arrow-up" size={22} color="#FFFFFF" />
-          </View>
-        </Pressable>
-      );
-    }
-    return (
-      <Pressable onPress={toggleRecording} disabled={isSending}>
-        <View style={[styles.circleBtn, styles.circleBtnPurple]}>
-          <MaterialCommunityIcons name="microphone" size={22} color="#FFFFFF" />
-        </View>
-      </Pressable>
-    );
-  };
 
   return (
     <KeyboardAvoidingView
@@ -147,6 +120,31 @@ export function ConversationScreen() {
             <MaterialCommunityIcons name="cog-outline" size={22} color="#374151" />
           </TouchableOpacity>
         </View>
+      </View>
+
+      {/* Mode chip row */}
+      <View style={styles.modeBar}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.modeBarContent}
+        >
+          {MODES.map((m) => {
+            const active = conversationMode === m.id;
+            return (
+              <TouchableOpacity
+                key={m.id}
+                onPress={() => setConversationMode(m.id)}
+                style={[styles.modeChip, active && styles.modeChipActive]}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.modeChipText, active && styles.modeChipTextActive]}>
+                  {m.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
       </View>
 
       {/* Chat list */}
@@ -183,12 +181,29 @@ export function ConversationScreen() {
         </View>
       )}
 
-      {/* Input bar */}
+      {/* Input bar — buttons live inside the rounded input box */}
       <View style={styles.inputBar}>
         <View style={styles.inputWrapper}>
-          {isRecording && (
-            <Animated.View style={[styles.recordingDot, { transform: [{ scale: pulseAnim }] }]} />
-          )}
+          {/* Left: mic (idle) or stop (recording) */}
+          <Pressable
+            onPress={isSending ? undefined : toggleRecording}
+            style={styles.innerBtn}
+            disabled={isSending}
+          >
+            {isRecording ? (
+              <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+                <MaterialCommunityIcons name="stop-circle" size={22} color="#EF4444" />
+              </Animated.View>
+            ) : (
+              <MaterialCommunityIcons
+                name="microphone"
+                size={22}
+                color={isSending ? '#D1D5DB' : '#6D28D9'}
+              />
+            )}
+          </Pressable>
+
+          {/* Center: text input */}
           <TextInput
             style={styles.input}
             value={transcript}
@@ -199,8 +214,20 @@ export function ConversationScreen() {
             editable={!isSending}
             onSubmitEditing={handleSend}
           />
+
+          {/* Right: send or spinner — only when there's text */}
+          {isSending ? (
+            <View style={styles.innerBtn}>
+              <ActivityIndicator size={18} color="#6D28D9" />
+            </View>
+          ) : hasText ? (
+            <Pressable onPress={handleSend} style={styles.innerBtn}>
+              <View style={styles.sendCircle}>
+                <MaterialCommunityIcons name="arrow-up" size={16} color="#FFFFFF" />
+              </View>
+            </Pressable>
+          ) : null}
         </View>
-        {renderInputButton()}
       </View>
     </KeyboardAvoidingView>
   );
@@ -219,6 +246,38 @@ const styles = StyleSheet.create({
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   headerBtn: { padding: 8 },
 
+  modeBar: {
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E5E7EB',
+  },
+  modeBarContent: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 8,
+    flexDirection: 'row',
+  },
+  modeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  modeChipActive: {
+    backgroundColor: '#6D28D9',
+    borderColor: '#6D28D9',
+  },
+  modeChipText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6B7280',
+  },
+  modeChipTextActive: {
+    color: '#FFFFFF',
+  },
+
   list: { flex: 1, backgroundColor: '#FFFFFF' },
   listContent: { paddingVertical: 16, flexGrow: 1, justifyContent: 'flex-end' },
 
@@ -230,57 +289,45 @@ const styles = StyleSheet.create({
   errorText: { color: '#991B1B', fontSize: 13 },
 
   inputBar: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
     paddingHorizontal: 12,
     paddingVertical: 10,
     paddingBottom: 14,
-    gap: 10,
     backgroundColor: '#FFFFFF',
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: '#E5E7EB',
   },
   inputWrapper: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F3F4F6',
-    borderRadius: 24,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    borderRadius: 26,
+    paddingHorizontal: 6,
+    paddingVertical: 6,
     minHeight: 46,
-    maxHeight: 120,
-    gap: 8,
+    maxHeight: 130,
+    gap: 2,
   },
-  recordingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#EF4444',
+  innerBtn: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
     flexShrink: 0,
   },
   input: {
     flex: 1,
     fontSize: 15,
     color: '#111827',
-    paddingTop: 0,
-    paddingBottom: 0,
+    paddingTop: 4,
+    paddingBottom: 4,
+    maxHeight: 100,
   },
-  circleBtn: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+  sendCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#6D28D9',
     alignItems: 'center',
     justifyContent: 'center',
-    flexShrink: 0,
-  },
-  circleBtnPurple: { backgroundColor: '#6D28D9' },
-  circleBtnRed: { backgroundColor: '#EF4444' },
-  circleBtnDisabled: { backgroundColor: '#D1D5DB' },
-  stopSquare: {
-    width: 14,
-    height: 14,
-    borderRadius: 3,
-    backgroundColor: '#FFFFFF',
   },
 });
