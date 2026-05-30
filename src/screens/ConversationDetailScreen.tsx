@@ -75,11 +75,13 @@ function parseMeta(content: string) {
 }
 
 function parseConversationContent(content: string): ConversationMessage[] {
-  const body = content.replace(/^---\n[\s\S]*?\n---\n?/, '');
-  const lines = body.split('\n\n').map(l => l.trim()).filter(Boolean);
-  return lines.map((line) => {
-    const userMatch = line.match(/^\*\*You\*\*: ([\s\S]+)$/);
-    const aiMatch = line.match(/^\*\*AI\*\*: ([\s\S]+)$/);
+  const body = content.replace(/^---\n[\s\S]*?\n---\n*/, '').trim();
+  if (!body) return [];
+  const parts = body.split(/\n\n(?=\*\*(You|AI)\*\*: )/);
+  return parts.map((part) => {
+    const trimmed = part.trim();
+    const userMatch = trimmed.match(/^\*\*You\*\*: ([\s\S]+)$/);
+    const aiMatch = trimmed.match(/^\*\*AI\*\*: ([\s\S]+)$/);
     if (userMatch) return { id: String(++idCounter), role: 'user' as const, text: userMatch[1].trim(), timestamp: 0 };
     if (aiMatch) return { id: String(++idCounter), role: 'assistant' as const, text: aiMatch[1].trim(), timestamp: 0 };
     return null;

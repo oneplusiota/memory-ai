@@ -1,12 +1,15 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useVoice } from './useVoice';
 import { useVault } from './useVault';
 import { hybridSearch } from '@/services/search/HybridSearch';
 import { getIndex } from '@/services/indexer/IndexStore';
-import type { VaultStats } from '@/types';
 import { chat, saveConversation } from '@/services/gemini/ConversationClient';
-import { saveConversationFile } from '@/services/vault/VaultWriter';
-import type { ConversationMessage, RoutingDecision, STTMode } from '@/types';
+import { saveConversationFile, readLifeContext } from '@/services/vault/VaultWriter';
+import { refreshLifeContext } from '@/services/llm/LifeContextClient';
+import type { ConversationMessage, ConversationMode, RoutingDecision, STTMode } from '@/types';
+import * as SecureStore from 'expo-secure-store';
+
+const CONVERSATION_MODE_KEY = 'conversation_mode';
 
 let msgIdCounter = 0;
 const mkId = () => String(++msgIdCounter);
@@ -17,7 +20,27 @@ export function useConversation(sttMode: STTMode = 'native') {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastSuggestSave, setLastSuggestSave] = useState(false);
+  const [conversationMode, setConversationModeState] = useState<ConversationMode>('journal');
   const conversationFilePathRef = useRef<string | null>(null);
+  const lifeContextRef = useRef<string | null>(null);
+
+  // Load persisted conversation mode on mount
+  useEffect(() => {
+    SecureStore.getItemAsync(CONVERSATION_MODE_KEY).then((v) => {
+      if (v) setConversationModeState(v as ConversationMode);
+    });
+  }, []);
+
+  const setConversationMode = useCallback(async (mode: ConversationMode) => {
+    setConversationModeState(mode);
+    await SecureStore.setItemAsync(CONVERSATION_MODE_KEY, mode);
+  }, []);
+
+  // Load life context once vault is available
+  useEffect(() => {
+    if (!vaultUri) return;
+    readLifeContext(vaultUri).then(ctx => { lifeContextRef.current = ctx; }).catch(() => {});
+  }, [vaultUri]);
 
   const baseRef = useRef('');
   const [transcript, setTranscript] = useState('');
@@ -75,28 +98,26 @@ export function useConversation(sttMode: STTMode = 'native') {
 
     try {
       const index = getIndex();
-      const results = hybridSearch(index, finalText, undefined, 3);
+      const results = hybridSearch(index, finalText, undefined, 5);
       const notes = results.map((r) => r.note);
       const allMessages = [...messages, userMsg];
 
-      const allIds = Object.keys(index.notes);
-      const tagFreq: Record<string, number> = {};
-      Object.values(index.notes).forEach(n => n.tags.forEach(t => { tagFreq[t] = (tagFreq[t] ?? 0) + 1; }));
-      const topTags = Object.entries(tagFreq).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([t]) => t);
-      const vaultStats: VaultStats = {
-        total: allIds.length,
-        atoms: allIds.filter(id => id.startsWith('atoms/')).length,
-        daily: allIds.filter(id => id.startsWith('daily/')).length,
-        conversations: allIds.filter(id => id.startsWith('conversations/')).length,
-        topTags,
-      };
+      const allAtoms = Object.values(index.notes).filter(n => n.id.startsWith('atoms/'));
 
-      const response = await chat(allMessages, notes, finalText, vaultStats);
+      const response = await chat(allMessages, notes, finalText, allAtoms, lifeContextRef.current ?? undefined, conversationMode);
       const aiMsg: ConversationMessage = {
         id: mkId(), role: 'assistant', text: response.reply, timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, aiMsg]);
       setLastSuggestSave(response.suggest_save);
+
+      // Refresh life context in background every 5 user messages
+      const userMsgCount = allMessages.filter(m => m.role === 'user').length;
+      if (vaultUri && userMsgCount % 5 === 0) {
+        refreshLifeContext(vaultUri, allMessages).then(updated => {
+          if (updated) lifeContextRef.current = updated;
+        }).catch(() => {});
+      }
     } catch (e: any) {
       setError(e.message ?? 'Error');
     } finally {
@@ -112,7 +133,9 @@ export function useConversation(sttMode: STTMode = 'native') {
   } | null> => {
     if (!vaultUri || messages.length === 0) return null;
     try {
-      const decision = await saveConversation(messages);
+      const index = getIndex();
+      const allAtoms = Object.values(index.notes).filter(n => n.id.startsWith('atoms/'));
+      const decision = await saveConversation(messages, allAtoms);
       return { decision, vaultUri, conversationFilePath: conversationFilePathRef.current };
     } catch (e: any) {
       setError(e.message ?? 'Failed to get save decision');
@@ -128,6 +151,10 @@ export function useConversation(sttMode: STTMode = 'native') {
     } catch {
       // best-effort
     }
+    // Update life context with anything shared in this conversation
+    refreshLifeContext(vaultUri, messages).then(updated => {
+      if (updated) lifeContextRef.current = updated;
+    }).catch(() => {});
   }, [vaultUri, messages]);
 
   const clearConversation = useCallback(() => {
@@ -147,6 +174,8 @@ export function useConversation(sttMode: STTMode = 'native') {
     error,
     lastSuggestSave,
     voiceState,
+    conversationMode,
+    setConversationMode,
     handleTranscriptChange,
     toggleRecording,
     sendMessage,

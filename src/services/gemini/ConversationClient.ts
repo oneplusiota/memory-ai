@@ -1,6 +1,6 @@
-import type { ConversationMessage, ConversationResponse, NoteNode, RoutingDecision, VaultStats } from '@/types';
+import type { ConversationMessage, ConversationMode, ConversationResponse, NoteNode, RoutingDecision } from '@/types';
 import {
-  CONVERSATION_SYSTEM_PROMPT,
+  buildSystemPrompt,
   CONVERSATION_RESPONSE_SCHEMA,
   buildChatPrompt,
   buildSavePrompt,
@@ -9,8 +9,8 @@ import { ROUTING_RESPONSE_SCHEMA } from './RoutingSchema';
 import { SYSTEM_PROMPT as SAVE_SYSTEM_PROMPT } from './RoutingPrompt';
 import { llmChat } from '@/services/llm/LLMClient';
 import type { LLMMessage } from '@/services/llm/LLMClient';
+import { sanitizeDates, getTodayDateString, getTimeHeading } from '@/utils/dateUtils';
 
-// Plain-text schema descriptions for Groq (which can't enforce schema server-side)
 const CONVERSATION_SCHEMA_DESCRIPTION = `{
   "reply": "string — your response to the user",
   "intent": "answer" | "acknowledge" | "clarify",
@@ -18,9 +18,13 @@ const CONVERSATION_SCHEMA_DESCRIPTION = `{
 }`;
 
 const ROUTING_SCHEMA_DESCRIPTION = `{
-  "action": "update_atom" | "create_atom" | "log_only" | "link_notes",
-  "target_note": "string — vault-relative path like atoms/Name.md (empty if log_only)",
-  "atom_content": "string — markdown to write to the atom note (empty if log_only)",
+  "notes": [
+    {
+      "action": "create_atom" | "update_atom",
+      "path": "string — vault-relative path like atoms/Note-Name.md",
+      "content": "string — full markdown content to write/append"
+    }
+  ],
   "daily_entry": "string — short timestamped block for today's daily note (always required)",
   "confidence": "high" | "medium" | "low",
   "reasoning": "string — brief explanation"
@@ -30,11 +34,13 @@ export async function chat(
   history: ConversationMessage[],
   relevantNotes: NoteNode[],
   currentMessage: string,
-  vaultStats: VaultStats,
+  allAtoms: NoteNode[],
+  lifeContext?: string,
+  mode: ConversationMode = 'journal',
 ): Promise<ConversationResponse> {
-  const userPrompt = buildChatPrompt(history, relevantNotes, currentMessage, vaultStats);
+  const userPrompt = buildChatPrompt(history, relevantNotes, currentMessage, allAtoms, lifeContext);
   const messages: LLMMessage[] = [
-    { role: 'system', content: CONVERSATION_SYSTEM_PROMPT },
+    { role: 'system', content: buildSystemPrompt(mode) },
     { role: 'user', content: userPrompt },
   ];
   const text = await llmChat(messages, CONVERSATION_RESPONSE_SCHEMA, CONVERSATION_SCHEMA_DESCRIPTION);
@@ -43,12 +49,26 @@ export async function chat(
 
 export async function saveConversation(
   history: ConversationMessage[],
+  allAtoms: NoteNode[],
 ): Promise<RoutingDecision> {
-  const userPrompt = buildSavePrompt(history);
+  const today = getTodayDateString();
+  const time = getTimeHeading();
+  const userPrompt = buildSavePrompt(history, allAtoms, today, time);
   const messages: LLMMessage[] = [
     { role: 'system', content: SAVE_SYSTEM_PROMPT },
     { role: 'user', content: userPrompt },
   ];
   const text = await llmChat(messages, ROUTING_RESPONSE_SCHEMA, ROUTING_SCHEMA_DESCRIPTION);
-  return JSON.parse(text) as RoutingDecision;
+  const decision = JSON.parse(text) as RoutingDecision;
+
+  // Sanitize dates: replace any hallucinated years with the correct one
+  const correctYear = today.slice(0, 4);
+  return {
+    ...decision,
+    daily_entry: sanitizeDates(decision.daily_entry, correctYear),
+    notes: decision.notes.map((n) => ({
+      ...n,
+      content: sanitizeDates(n.content, correctYear),
+    })),
+  };
 }
