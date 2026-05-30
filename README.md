@@ -111,7 +111,7 @@ When a vault is connected, the AI runs in **agentic mode** and can call tools du
 | `update_note` | Update an existing note |
 | `list_notes` | List notes filtered by type/area/status |
 | `get_date_time` | Current date and time |
-| `web_search` | Search the web (Tavily or Brave) |
+| `web_search` | Search the web (Tavily or Google Custom Search) |
 | `get_calendar_events` | Read upcoming Google Calendar events |
 | `create_calendar_event` | Create a calendar event (requires confirmation) |
 | Custom `.tool.md` | User-defined tools stored in `vault/tools/` |
@@ -149,7 +149,7 @@ AgentClient — agentic tool-calling loop
   ├── search_vault  → HybridSearch (TF-IDF + wikilink graph)
   ├── read_note     → VaultScanner + MarkdownParser
   ├── create/update → VaultWriter (confirm before write)
-  ├── web_search    → Tavily / Brave Search API
+  ├── web_search    → Tavily / Google Custom Search API
   └── calendar      → Google Calendar API
         ↓
 LLMClient (provider-agnostic façade)
@@ -229,8 +229,10 @@ LIST FROM "conversations" WHERE saved_to_vault = true
 ### Tavily (web search) — Free tier (1,000 searches/month)
 1. Go to [app.tavily.com](https://app.tavily.com) → Sign up → copy your API key
 
-### Brave Search (web search alternative) — Free tier (2,000 searches/month)
-1. Go to [brave.com/search/api](https://brave.com/search/api/) → Sign up → copy your API key
+### Google Custom Search (web search alternative) — Free tier (100 queries/day)
+1. Enable the **Custom Search JSON API** in [Google Cloud Console](https://console.cloud.google.com/apis/library/customsearch.googleapis.com) → copy the API key
+2. Create a Programmable Search Engine at [programmablesearchengine.google.com](https://programmablesearchengine.google.com) → copy the **Search Engine ID (cx)**
+3. Enter both in Settings → Web Search → Google Search
 
 ---
 

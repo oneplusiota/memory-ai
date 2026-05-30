@@ -1,33 +1,65 @@
 /**
- * WebSearchClient — Tavily and Brave Search adapters.
- * The active provider and API key are stored in SecureStore and loaded at runtime.
+ * WebSearchClient — factory-pattern web search adapters (Tavily, Google Custom Search).
+ * The active provider and API keys are stored in SecureStore and loaded at runtime.
+ * To add a new provider: implement WebSearchAdapter, call WebSearchAdapterFactory.register().
  */
 
 import type { ToolDefinition, ToolResult, WebSearchProvider } from '@/types';
 import * as SecureStore from 'expo-secure-store';
 
+// ── Adapter interface ──────────────────────────────────────────────────────
+
+export interface WebSearchAdapter {
+  search(toolCallId: string, query: string, maxResults: number): Promise<ToolResult>;
+}
+
+// ── Factory ────────────────────────────────────────────────────────────────
+
+export class WebSearchAdapterFactory {
+  private static readonly registry = new Map<WebSearchProvider, WebSearchAdapter>();
+
+  static register(provider: WebSearchProvider, adapter: WebSearchAdapter): void {
+    this.registry.set(provider, adapter);
+  }
+
+  static get(provider: WebSearchProvider): WebSearchAdapter {
+    const adapter = this.registry.get(provider);
+    if (!adapter) throw new Error(`No web search adapter registered for provider: ${provider}`);
+    return adapter;
+  }
+}
+
+// ── SecureStore keys ───────────────────────────────────────────────────────
+
 const PROVIDER_KEY = 'web_search_provider';
 const TAVILY_KEY_STORE = 'tavily_api_key';
-const BRAVE_KEY_STORE = 'brave_api_key';
+const GOOGLE_API_KEY_STORE = 'google_search_api_key';
+const GOOGLE_CX_STORE = 'google_search_cx';
+
+// ── Module-level state ─────────────────────────────────────────────────────
 
 let activeProvider: WebSearchProvider = 'tavily';
 let tavilyKey = '';
-let braveKey = '';
-
-// ── Config management ──────────────────────────────────────────────────────
+let googleApiKey = '';
+let googleCx = '';
 
 export function setWebSearchProvider(p: WebSearchProvider) { activeProvider = p; }
 export function getWebSearchProvider(): WebSearchProvider { return activeProvider; }
 export function setTavilyKey(k: string) { tavilyKey = k; }
-export function setBraveKey(k: string) { braveKey = k; }
+export function setGoogleApiKey(k: string) { googleApiKey = k; }
+export function setGoogleCx(cx: string) { googleCx = cx; }
+
+// ── Config management ──────────────────────────────────────────────────────
 
 export async function loadWebSearchConfig(): Promise<void> {
   const provider = await SecureStore.getItemAsync(PROVIDER_KEY);
   const tKey = await SecureStore.getItemAsync(TAVILY_KEY_STORE);
-  const bKey = await SecureStore.getItemAsync(BRAVE_KEY_STORE);
+  const gKey = await SecureStore.getItemAsync(GOOGLE_API_KEY_STORE);
+  const gCx = await SecureStore.getItemAsync(GOOGLE_CX_STORE);
   if (provider) activeProvider = provider as WebSearchProvider;
   if (tKey) tavilyKey = tKey;
-  if (bKey) braveKey = bKey;
+  if (gKey) googleApiKey = gKey;
+  if (gCx) googleCx = gCx;
 }
 
 export async function saveWebSearchProvider(p: WebSearchProvider): Promise<void> {
@@ -40,19 +72,26 @@ export async function saveTavilyKey(k: string): Promise<void> {
   await SecureStore.setItemAsync(TAVILY_KEY_STORE, k);
 }
 
-export async function saveBraveKey(k: string): Promise<void> {
-  braveKey = k;
-  await SecureStore.setItemAsync(BRAVE_KEY_STORE, k);
+export async function saveGoogleApiKey(k: string): Promise<void> {
+  googleApiKey = k;
+  await SecureStore.setItemAsync(GOOGLE_API_KEY_STORE, k);
+}
+
+export async function saveGoogleCx(cx: string): Promise<void> {
+  googleCx = cx;
+  await SecureStore.setItemAsync(GOOGLE_CX_STORE, cx);
 }
 
 export async function loadStoredWebSearchKeys(): Promise<{
   tavilyKey: string;
-  braveKey: string;
+  googleApiKey: string;
+  googleCx: string;
   provider: WebSearchProvider;
 }> {
   return {
     tavilyKey: (await SecureStore.getItemAsync(TAVILY_KEY_STORE)) ?? '',
-    braveKey: (await SecureStore.getItemAsync(BRAVE_KEY_STORE)) ?? '',
+    googleApiKey: (await SecureStore.getItemAsync(GOOGLE_API_KEY_STORE)) ?? '',
+    googleCx: (await SecureStore.getItemAsync(GOOGLE_CX_STORE)) ?? '',
     provider: ((await SecureStore.getItemAsync(PROVIDER_KEY)) ?? 'tavily') as WebSearchProvider,
   };
 }
@@ -83,90 +122,89 @@ export async function executeWebSearch(
   }
 
   try {
-    if (activeProvider === 'tavily') {
-      return await searchTavily(toolCallId, query, maxResults);
-    }
-    return await searchBrave(toolCallId, query, maxResults);
+    return await WebSearchAdapterFactory.get(activeProvider).search(toolCallId, query, maxResults);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return { toolCallId, name: 'web_search', output: `Web search failed: ${msg}` };
   }
 }
 
-async function searchTavily(
-  toolCallId: string,
-  query: string,
-  maxResults: number,
-): Promise<ToolResult> {
-  if (!tavilyKey) {
-    return { toolCallId, name: 'web_search', output: 'Tavily API key not configured. Add it in Settings → Web Search.' };
+// ── Tavily adapter ─────────────────────────────────────────────────────────
+
+class TavilyAdapter implements WebSearchAdapter {
+  async search(toolCallId: string, query: string, maxResults: number): Promise<ToolResult> {
+    if (!tavilyKey) {
+      return { toolCallId, name: 'web_search', output: 'Tavily API key not configured. Add it in Settings → Web Search.' };
+    }
+
+    const response = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: tavilyKey,
+        query,
+        max_results: maxResults,
+        search_depth: 'basic',
+        include_answer: true,
+      }),
+    });
+
+    if (!response.ok) throw new Error(`Tavily ${response.status}`);
+
+    const data = await response.json();
+    const lines: string[] = [];
+    if (data.answer) lines.push(`**Summary:** ${data.answer}\n`);
+
+    const results: { title: string; url: string; content: string }[] = data.results ?? [];
+    results.slice(0, maxResults).forEach((r, i) => {
+      lines.push(`${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.content?.slice(0, 200) ?? ''}`);
+    });
+
+    return { toolCallId, name: 'web_search', output: lines.join('\n') || 'No results found.' };
   }
-
-  const response = await fetch('https://api.tavily.com/search', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      api_key: tavilyKey,
-      query,
-      max_results: maxResults,
-      search_depth: 'basic',
-      include_answer: true,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Tavily ${response.status}`);
-  }
-
-  const data = await response.json();
-
-  const lines: string[] = [];
-  if (data.answer) lines.push(`**Summary:** ${data.answer}\n`);
-
-  const results: { title: string; url: string; content: string }[] = data.results ?? [];
-  results.slice(0, maxResults).forEach((r, i) => {
-    lines.push(`${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.content?.slice(0, 200) ?? ''}`);
-  });
-
-  return { toolCallId, name: 'web_search', output: lines.join('\n') || 'No results found.' };
 }
 
-async function searchBrave(
-  toolCallId: string,
-  query: string,
-  maxResults: number,
-): Promise<ToolResult> {
-  if (!braveKey) {
-    return { toolCallId, name: 'web_search', output: 'Brave Search API key not configured. Add it in Settings → Web Search.' };
+// ── Google Custom Search adapter ───────────────────────────────────────────
+
+class GoogleSearchAdapter implements WebSearchAdapter {
+  async search(toolCallId: string, query: string, maxResults: number): Promise<ToolResult> {
+    if (!googleApiKey) {
+      return { toolCallId, name: 'web_search', output: 'Google Search API key not configured. Add it in Settings → Web Search.' };
+    }
+    if (!googleCx) {
+      return { toolCallId, name: 'web_search', output: 'Google Search Engine ID (cx) not configured. Add it in Settings → Web Search.' };
+    }
+
+    const url = new URL('https://www.googleapis.com/customsearch/v1');
+    url.searchParams.set('key', googleApiKey);
+    url.searchParams.set('cx', googleCx);
+    url.searchParams.set('q', query);
+    url.searchParams.set('num', String(Math.min(maxResults, 10)));
+
+    const response = await fetch(url.toString());
+
+    if (!response.ok) {
+      if (response.status === 429) throw new Error('Google Search daily quota exceeded (100 queries/day free).');
+      if (response.status === 403) throw new Error('Google Search API key invalid or quota exceeded. Check your key in Settings.');
+      throw new Error(`Google Search ${response.status}`);
+    }
+
+    const data = await response.json();
+    const items: { title: string; link: string; snippet: string }[] = data.items ?? [];
+
+    if (items.length === 0) {
+      return { toolCallId, name: 'web_search', output: 'No results found.' };
+    }
+
+    const lines = items.slice(0, maxResults).map((r, i) =>
+      `${i + 1}. **${r.title}**\n   ${r.link}\n   ${r.snippet?.slice(0, 200) ?? ''}`,
+    );
+
+    return { toolCallId, name: 'web_search', output: lines.join('\n') };
   }
-
-  const url = new URL('https://api.search.brave.com/res/v1/web/search');
-  url.searchParams.set('q', query);
-  url.searchParams.set('count', String(maxResults));
-
-  const response = await fetch(url.toString(), {
-    headers: {
-      Accept: 'application/json',
-      'Accept-Encoding': 'gzip',
-      'X-Subscription-Token': braveKey,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Brave Search ${response.status}`);
-  }
-
-  const data = await response.json();
-  const results: { title: string; url: string; description: string }[] =
-    data.web?.results ?? [];
-
-  if (results.length === 0) {
-    return { toolCallId, name: 'web_search', output: 'No results found.' };
-  }
-
-  const lines = results.slice(0, maxResults).map((r, i) =>
-    `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.description?.slice(0, 200) ?? ''}`,
-  );
-
-  return { toolCallId, name: 'web_search', output: lines.join('\n') };
 }
+
+// ── Register all adapters ──────────────────────────────────────────────────
+
+WebSearchAdapterFactory.register('tavily', new TavilyAdapter());
+WebSearchAdapterFactory.register('google', new GoogleSearchAdapter());

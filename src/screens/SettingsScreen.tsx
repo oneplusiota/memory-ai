@@ -17,7 +17,7 @@ import {
   saveGeminiModelPref, saveGroqModelPref, saveClaudeModelPref, loadStoredKeys,
 } from '@/services/gemini/GeminiClient';
 import {
-  saveWebSearchProvider, saveTavilyKey, saveBraveKey,
+  saveWebSearchProvider, saveTavilyKey, saveGoogleApiKey, saveGoogleCx,
   loadStoredWebSearchKeys,
 } from '@/services/tools/WebSearchClient';
 import type { AgentMode, LLMProvider, STTMode, WebSearchProvider } from '@/types';
@@ -82,7 +82,7 @@ const LLM_PROVIDERS: { value: LLMProvider; label: string; desc: string }[] = [
 
 const WEB_SEARCH_PROVIDERS: { value: WebSearchProvider; label: string; desc: string }[] = [
   { value: 'tavily', label: 'Tavily', desc: '1,000 searches/mo free · best for AI' },
-  { value: 'brave', label: 'Brave Search', desc: '2,000 searches/mo free' },
+  { value: 'google', label: 'Google Search', desc: '100 queries/day free · Custom Search API' },
 ];
 
 const AGENT_MODES: { value: AgentMode; label: string; desc: string }[] = [
@@ -224,7 +224,8 @@ export function SettingsScreen() {
   // Web search state
   const [webSearchProvider, setWebSearchProviderState] = useState<WebSearchProvider>('tavily');
   const [tavilyKey, setTavilyKeyState] = useState('');
-  const [braveKey, setBraveKeyState] = useState('');
+  const [googleApiKey, setGoogleApiKeyState] = useState('');
+  const [googleSearchCx, setGoogleSearchCxState] = useState('');
 
   // Agent / STT state
   const [agentMode, setAgentModeState] = useState<AgentMode>('agentic');
@@ -245,9 +246,10 @@ export function SettingsScreen() {
       setGroqModelState(stored.groqModel);
       setClaudeModelState(stored.claudeModel);
 
-      const { tavilyKey: tk, braveKey: bk, provider: wsp } = await loadStoredWebSearchKeys();
+      const { tavilyKey: tk, googleApiKey: gk, googleCx: gcx, provider: wsp } = await loadStoredWebSearchKeys();
       if (tk) setTavilyKeyState(tk);
-      if (bk) setBraveKeyState(bk);
+      if (gk) setGoogleApiKeyState(gk);
+      if (gcx) setGoogleSearchCxState(gcx);
       setWebSearchProviderState(wsp);
 
       const am = await SecureStore.getItemAsync(AGENT_MODE_KEY);
@@ -314,18 +316,27 @@ export function SettingsScreen() {
     setSnack('Tavily API key saved.');
   }, [keyDraft]);
 
-  const handleSaveBraveKey = useCallback(async () => {
+  const handleSaveGoogleApiKey = useCallback(async () => {
     const key = keyDraft.trim();
     if (!key) return;
-    await saveBraveKey(key);
-    setBraveKeyState(key);
-    setSnack('Brave Search API key saved.');
+    await saveGoogleApiKey(key);
+    setGoogleApiKeyState(key);
+    setSnack('Google Search API key saved.');
+  }, [keyDraft]);
+
+  const handleSaveGoogleCx = useCallback(async () => {
+    const cx = keyDraft.trim();
+    if (!cx) return;
+    await saveGoogleCx(cx);
+    setGoogleSearchCxState(cx);
+    setSnack('Google Search Engine ID saved.');
   }, [keyDraft]);
 
   const handleSelectWebSearch = useCallback(async (p: WebSearchProvider) => {
     setWebSearchProviderState(p);
     await saveWebSearchProvider(p);
-    setSnack(`Web search set to ${p === 'tavily' ? 'Tavily' : 'Brave'}.`);
+    const label = WEB_SEARCH_PROVIDERS.find(x => x.value === p)?.label ?? p;
+    setSnack(`Web search set to ${label}.`);
   }, []);
 
   const handleSelectAgentMode = useCallback(async (m: AgentMode) => {
@@ -478,12 +489,21 @@ export function SettingsScreen() {
               onPress={() => openKeyModal('tavily_key', tavilyKey)}
             />
           ) : (
-            <SettingRow
-              icon="key-outline"
-              label="Brave Search API Key"
-              value={maskKey(braveKey)}
-              onPress={() => openKeyModal('brave_key', braveKey)}
-            />
+            <>
+              <SettingRow
+                icon="key-outline"
+                label="Google API Key"
+                value={maskKey(googleApiKey)}
+                onPress={() => openKeyModal('google_api_key', googleApiKey)}
+              />
+              <View style={styles.cardDivider} />
+              <SettingRow
+                icon="identifier"
+                label="Search Engine ID (cx)"
+                value={googleSearchCx ? `…${googleSearchCx.slice(-6)}` : 'Not set'}
+                onPress={() => openKeyModal('google_cx', googleSearchCx)}
+              />
+            </>
           )}
         </View>
 
@@ -649,12 +669,21 @@ export function SettingsScreen() {
         onClose={() => setOpenModal(null)}
       />
       <KeyModal
-        visible={openModal === 'brave_key'}
-        title="Brave Search API Key"
-        placeholder="BSA..."
+        visible={openModal === 'google_api_key'}
+        title="Google Search API Key"
+        placeholder="AIza..."
         value={keyDraft}
         onChange={setKeyDraft}
-        onSave={handleSaveBraveKey}
+        onSave={handleSaveGoogleApiKey}
+        onClose={() => setOpenModal(null)}
+      />
+      <KeyModal
+        visible={openModal === 'google_cx'}
+        title="Google Search Engine ID"
+        placeholder="e.g. 017576662512468239146:omuauf_lfve"
+        value={keyDraft}
+        onChange={setKeyDraft}
+        onSave={handleSaveGoogleCx}
         onClose={() => setOpenModal(null)}
       />
 
