@@ -17,7 +17,7 @@ import {
   saveGeminiModelPref, saveGroqModelPref, saveClaudeModelPref, loadStoredKeys,
 } from '@/services/gemini/GeminiClient';
 import {
-  saveWebSearchProvider, saveTavilyKey, saveGoogleApiKey, saveGoogleCx,
+  saveWebSearchProvider, saveTavilyKey, saveGoogleCx,
   loadStoredWebSearchKeys,
 } from '@/services/tools/WebSearchClient';
 import type { AgentMode, LLMProvider, STTMode, WebSearchProvider } from '@/types';
@@ -224,7 +224,6 @@ export function SettingsScreen() {
   // Web search state
   const [webSearchProvider, setWebSearchProviderState] = useState<WebSearchProvider>('tavily');
   const [tavilyKey, setTavilyKeyState] = useState('');
-  const [googleApiKey, setGoogleApiKeyState] = useState('');
   const [googleSearchCx, setGoogleSearchCxState] = useState('');
 
   // Agent / STT state
@@ -246,9 +245,8 @@ export function SettingsScreen() {
       setGroqModelState(stored.groqModel);
       setClaudeModelState(stored.claudeModel);
 
-      const { tavilyKey: tk, googleApiKey: gk, googleCx: gcx, provider: wsp } = await loadStoredWebSearchKeys();
+      const { tavilyKey: tk, googleCx: gcx, provider: wsp } = await loadStoredWebSearchKeys();
       if (tk) setTavilyKeyState(tk);
-      if (gk) setGoogleApiKeyState(gk);
       if (gcx) setGoogleSearchCxState(gcx);
       setWebSearchProviderState(wsp);
 
@@ -314,14 +312,6 @@ export function SettingsScreen() {
     await saveTavilyKey(key);
     setTavilyKeyState(key);
     setSnack('Tavily API key saved.');
-  }, [keyDraft]);
-
-  const handleSaveGoogleApiKey = useCallback(async () => {
-    const key = keyDraft.trim();
-    if (!key) return;
-    await saveGoogleApiKey(key);
-    setGoogleApiKeyState(key);
-    setSnack('Google Search API key saved.');
   }, [keyDraft]);
 
   const handleSaveGoogleCx = useCallback(async () => {
@@ -489,21 +479,12 @@ export function SettingsScreen() {
               onPress={() => openKeyModal('tavily_key', tavilyKey)}
             />
           ) : (
-            <>
-              <SettingRow
-                icon="key-outline"
-                label="Google API Key"
-                value={maskKey(googleApiKey)}
-                onPress={() => openKeyModal('google_api_key', googleApiKey)}
-              />
-              <View style={styles.cardDivider} />
-              <SettingRow
-                icon="identifier"
-                label="Search Engine ID (cx)"
-                value={googleSearchCx ? `…${googleSearchCx.slice(-6)}` : 'Not set'}
-                onPress={() => openKeyModal('google_cx', googleSearchCx)}
-              />
-            </>
+            <SettingRow
+              icon="identifier"
+              label="Search Engine ID (cx)"
+              value={googleSearchCx ? `…${googleSearchCx.slice(-6)}` : 'Not set'}
+              onPress={() => openKeyModal('google_cx', googleSearchCx)}
+            />
           )}
         </View>
 
@@ -666,15 +647,6 @@ export function SettingsScreen() {
         value={keyDraft}
         onChange={setKeyDraft}
         onSave={handleSaveTavilyKey}
-        onClose={() => setOpenModal(null)}
-      />
-      <KeyModal
-        visible={openModal === 'google_api_key'}
-        title="Google Search API Key"
-        placeholder="AIza..."
-        value={keyDraft}
-        onChange={setKeyDraft}
-        onSave={handleSaveGoogleApiKey}
         onClose={() => setOpenModal(null)}
       />
       <KeyModal

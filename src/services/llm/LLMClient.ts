@@ -109,6 +109,7 @@ let claudeModel = "claude-sonnet-4-5";
 export function setActiveProvider(p: LLMProvider) { activeProvider = p; }
 export function getActiveProvider(): LLMProvider { return activeProvider; }
 export function setGeminiKey(k: string) { geminiKey = k; }
+export function getGeminiKey(): string { return geminiKey; }
 export function setGeminiModel(m: string) { geminiModel = m; }
 export function setGroqKey(k: string) { groqKey = k; }
 export function setGroqModel(m: string) { groqModel = m; }
