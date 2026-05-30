@@ -17,8 +17,8 @@ export function useVoice(
 ) {
   const [state, setState] = useState<VoiceState>('idle');
   const [error, setError] = useState<string | null>(null);
-  // Track whether the user explicitly stopped — prevents auto-restart after manual stop
-  const userStoppedRef = useRef(false);
+  // Starts true so spurious module-init events don't auto-start the mic
+  const userStoppedRef = useRef(true);
   // Track any pending auto-restart timer so we can cancel it on manual stop
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -26,7 +26,9 @@ export function useVoice(
 
   // ── Native STT events ──────────────────────────────────────────
   useSpeechRecognitionEvent('start', () => {
-    if (sttMode === 'native' || sttMode === 'native-corrected') setState('listening');
+    if (sttMode !== 'native' && sttMode !== 'native-corrected') return;
+    if (userStoppedRef.current) return;
+    setState('listening');
   });
 
   useSpeechRecognitionEvent('result', (event) => {
@@ -50,6 +52,8 @@ export function useVoice(
       // Android stopped due to silence timeout — restart silently to keep mic open
       restartTimerRef.current = setTimeout(() => {
         restartTimerRef.current = null;
+        // Guard: if the user stopped while the timer was pending, abort
+        if (userStoppedRef.current) return;
         ExpoSpeechRecognitionModule.start({
           lang: 'en-US',
           interimResults: true,
@@ -72,6 +76,7 @@ export function useVoice(
     if (!userStoppedRef.current && recoverable) {
       restartTimerRef.current = setTimeout(() => {
         restartTimerRef.current = null;
+        if (userStoppedRef.current) return;
         ExpoSpeechRecognitionModule.start({
           lang: 'en-US',
           interimResults: true,
