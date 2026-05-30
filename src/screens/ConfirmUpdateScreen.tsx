@@ -30,32 +30,38 @@ export function ConfirmUpdateScreen() {
       // Write daily entry
       const dailyPath = await appendToDailyNote(vaultUri, decision.daily_entry);
       const dailyParsed = parseNote(decision.daily_entry, noteTitle(dailyPath));
-      index.notes[dailyPath] = { id: dailyPath, title: dailyParsed.title, tags: dailyParsed.tags, aliases: dailyParsed.aliases, summary: dailyParsed.summary, outlinks: dailyParsed.outlinks, type: 'daily', lastModified: Date.now() };
+      index.notes[dailyPath] = {
+        id: dailyPath, title: dailyParsed.title, tags: dailyParsed.tags,
+        aliases: dailyParsed.aliases, summary: dailyParsed.summary,
+        outlinks: dailyParsed.outlinks, type: 'daily', lastModified: Date.now(),
+      };
       indexNote(index, dailyPath, tokenize(dailyParsed.body));
       indexLinks(index, dailyPath, dailyParsed.outlinks);
 
-      // Write atom if applicable
-      if (decision.action === 'update_atom' && decision.target_note && decision.atom_content) {
-        await appendToNote(vaultUri, decision.target_note, decision.atom_content);
-        atomsTouched.push(decision.target_note);
-        const parsed = parseNote(decision.atom_content, noteTitle(decision.target_note));
-        index.notes[decision.target_note] = { id: decision.target_note, title: parsed.title, tags: parsed.tags, aliases: parsed.aliases, summary: parsed.summary, outlinks: parsed.outlinks, type: parsed.type, area: parsed.area, status: parsed.status, lastModified: Date.now() };
-        indexNote(index, decision.target_note, tokenize(parsed.body));
-        indexLinks(index, decision.target_note, parsed.outlinks);
-      } else if (decision.action === 'create_atom' && decision.target_note && decision.atom_content) {
-        await createNote(vaultUri, decision.target_note, decision.atom_content);
-        atomsTouched.push(decision.target_note);
-        const parsed = parseNote(decision.atom_content, noteTitle(decision.target_note));
-        index.notes[decision.target_note] = { id: decision.target_note, title: parsed.title, tags: parsed.tags, aliases: parsed.aliases, summary: parsed.summary, outlinks: parsed.outlinks, type: parsed.type, area: parsed.area, status: parsed.status, lastModified: Date.now() };
-        indexNote(index, decision.target_note, tokenize(parsed.body));
-        indexLinks(index, decision.target_note, parsed.outlinks);
+      // Write each atom note
+      for (const op of decision.notes) {
+        if (!op.path || !op.content) continue;
+        if (op.action === 'update_atom') {
+          await appendToNote(vaultUri, op.path, op.content);
+        } else {
+          await createNote(vaultUri, op.path, op.content);
+        }
+        atomsTouched.push(op.path);
+        const parsed = parseNote(op.content, noteTitle(op.path));
+        index.notes[op.path] = {
+          id: op.path, title: parsed.title, tags: parsed.tags,
+          aliases: parsed.aliases, summary: parsed.summary, outlinks: parsed.outlinks,
+          type: parsed.type, area: parsed.area, status: parsed.status,
+          lastModified: Date.now(),
+        };
+        indexNote(index, op.path, tokenize(parsed.body));
+        indexLinks(index, op.path, parsed.outlinks);
       }
 
       await saveIndex(index);
 
-      // Mark conversation as saved if we have its file path
       if (conversationFilePath && vaultUri) {
-        await updateConversationMeta(vaultUri, conversationFilePath, true /* extracted */, atomsTouched).catch(() => {});
+        await updateConversationMeta(vaultUri, conversationFilePath, true, atomsTouched).catch(() => {});
       }
 
       success = true;
@@ -66,6 +72,8 @@ export function ConfirmUpdateScreen() {
       if (success) navigation.goBack();
     }
   };
+
+  const hasNotes = decision.notes.length > 0;
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -89,22 +97,32 @@ export function ConfirmUpdateScreen() {
         </Card.Content>
       </Card>
 
-      {decision.atom_content ? (
+      {hasNotes ? (
+        decision.notes.map((op, i) => (
+          <Card key={op.path + i} style={styles.card}>
+            <Card.Title
+              title={noteTitle(op.path)}
+              subtitle={op.path}
+              right={() => (
+                <Chip compact style={styles.chip}>
+                  {op.action === 'create_atom' ? 'new atom' : 'update atom'}
+                </Chip>
+              )}
+            />
+            <Card.Content>
+              <Text variant="bodySmall" style={styles.code}>{op.content}</Text>
+            </Card.Content>
+          </Card>
+        ))
+      ) : (
         <Card style={styles.card}>
-          <Card.Title
-            title={decision.target_note ? noteTitle(decision.target_note) : 'Atom Note'}
-            subtitle={decision.target_note}
-            right={() => (
-              <Chip compact style={styles.chip}>
-                {decision.action === 'create_atom' ? 'new atom' : 'update atom'}
-              </Chip>
-            )}
-          />
           <Card.Content>
-            <Text variant="bodySmall" style={styles.code}>{decision.atom_content}</Text>
+            <Text variant="bodySmall" style={{ color: '#6B7280' }}>
+              No atom notes — daily note only.
+            </Text>
           </Card.Content>
         </Card>
-      ) : null}
+      )}
 
       <View style={styles.actions}>
         <Button mode="contained" onPress={handleApply} loading={loading} disabled={loading} style={styles.btn}>

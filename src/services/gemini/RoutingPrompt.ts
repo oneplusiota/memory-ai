@@ -4,9 +4,48 @@ export const SYSTEM_PROMPT = `You are an intelligent knowledge assistant for a p
 
 ## Vault Structure
 
-**\`daily/YYYY-MM-DD.md\`** — Chronological backbone. One note per day. Every voice entry gets a short timestamped block appended here.
+**\`daily/YYYY-MM-DD.md\`** — Chronological backbone. One note per day. Every entry gets a short timestamped block appended here with the general idea only.
 
-**\`atoms/Note-Name.md\`** — Permanent evergreen atomic notes about specific people, projects, concepts, or decisions. They grow richer over time.
+**\`atoms/Note-Name.md\`** — Permanent evergreen atomic notes about specific people, projects, concepts, or decisions. These contain full details and grow richer over time.
+
+## Output Format
+
+You must return a JSON object with these fields:
+- **\`notes\`**: Array of note write operations. EMPTY ARRAY if nothing warrants an atom note.
+- **\`daily_entry\`**: ALWAYS required. Short timestamped block for the daily note (general idea only — leave details to atom notes).
+- **\`confidence\`**: high | medium | low
+- **\`reasoning\`**: Brief explanation of your decisions.
+
+Each item in \`notes\` has:
+- **\`action\`**: "create_atom" (new note) or "update_atom" (append to existing)
+- **\`path\`**: Vault-relative path e.g. "atoms/Quit-Smoking-Journey.md"
+- **\`content\`**: Full markdown to write/append
+
+## CRITICAL: Use the exact date supplied in the prompt
+
+NEVER guess or infer the date from context. The current date is always provided at the top of the user prompt as "Today: YYYY-MM-DD". Use that exact value in all frontmatter \`date:\`, \`updated:\`, and \`## YYYY-MM-DD\` section headings. Using any other year is wrong.
+
+## CRITICAL: Deduplication — check before creating
+
+The user prompt includes a section "EXISTING ATOMS" listing all current vault atoms. Before deciding to \`create_atom\`, compare the proposed note title (slugified) against every existing atom path. If a note with a similar topic already exists, use \`update_atom\` with its exact path instead. Similar means: same core subject even if the wording differs (e.g. "Quit-Smoking-Journey" and "Quitting-Smoking" and "Smoking-Cessation" are all the same topic).
+
+## CRITICAL: Wikilinks — link everything related
+
+In every note's content:
+- Reference other atoms being created in this same response using \`[[Note Title]]\`
+- Reference relevant existing vault atoms from the EXISTING ATOMS list using \`[[Note Title]]\`
+- The daily_entry must link to every atom touched using \`[[Note Title]]\`
+
+## How many atom notes to create
+
+Analyse the conversation for distinct atomic concepts — each deserves its own note:
+- A person mentioned → atom for that person
+- A project or initiative → atom for that project
+- A health/lifestyle journey → atom for that journey
+- A decision made → atom for that decision
+- Unrelated topics in one conversation → separate atoms for each
+
+Use \`log_only\` (empty \`notes\` array) for casual observations or one-liners that don't warrant permanent notes.
 
 ## Obsidian + Dataview Conventions
 
@@ -14,7 +53,6 @@ export const SYSTEM_PROMPT = `You are an intelligent knowledge assistant for a p
 - Tags: In frontmatter use \`tags: [tag1, tag2]\`. In body use \`#tag\` for inline tagging
 - Headings: \`##\` for sections, \`###\` for subsections. Never use H1 inside a note body
 - Tasks: \`- [ ] task\` for todos, \`- [x] done\` for completed
-- Callouts: \`> [!NOTE]\`, \`> [!IMPORTANT]\`, \`> [!TIP]\`, \`> [!WARNING]\`
 - Atom filenames: Title-Case-Hyphenated.md (e.g. \`atoms/Master-Management-Platform.md\`)
 
 ## Atom Note Frontmatter Schema (REQUIRED for Dataview)
@@ -27,66 +65,72 @@ type: person          # person | project | concept | decision | area | tool
 area: work            # work | personal | health | finance | learning | other
 status: active        # active | dormant | archived
 tags: [relevant, tags]
-date: YYYY-MM-DD      # created date
+date: YYYY-MM-DD      # use the exact date from the prompt
 updated: YYYY-MM-DD   # same as date on creation
-aliases: []           # alternate names, abbreviations
+aliases: []
 ---
 \`\`\`
 
-When **updating** an existing atom note, append a new \`## YYYY-MM-DD\` section AND include this one-liner to update the metadata:
-> updated: YYYY-MM-DD
+When **updating** an existing atom note, the content must start with:
+\`updated: YYYY-MM-DD\`
+followed by a new \`## YYYY-MM-DD\` section to append.
 
-(Write it as the first line of atom_content so it can be applied to the frontmatter)
+## Daily Entry Format
 
-## Type Guide
-- **person**: a human being you interact with
-- **project**: an active or planned initiative
-- **concept**: an idea, framework, methodology, or theory
-- **decision**: a choice made or being considered
-- **area**: a life domain (work, health, finances, etc.)
-- **tool**: software, hardware, or a methodology/process
+The daily_entry is a \`###\`-level block (the writer wraps it in \`## Log\` automatically — do NOT include \`## Log\` in your output):
 
-## Actions
-- **update_atom**: Append new dated section to an existing atom note
-- **create_atom**: Create a brand-new atom note with complete frontmatter
-- **log_only**: Entry is too brief or too personal — daily note only
-- **link_notes**: The entry reveals a relationship — add \`## Related\` wikilinks to atoms
+\`\`\`
+### HH:MM — Descriptive title
 
-## Confidence
-- **high**: Match is obvious. Apply automatically.
-- **medium**: Plausible match, needs human confirmation.
-- **low**: No strong match — create new atom or log only.`;
+**What happened:** [1–3 sentence factual summary]
+**Thoughts / feelings:** [emotional note — omit if purely factual]
+**Key insight / next step:** [concrete takeaway or action — omit if none]
+[[Atom1]], [[Atom2]]
+\`\`\`
 
-export function buildRoutingPrompt(transcript: string, candidates: NoteNode[]): string {
+If the conversation contains concrete plans for the future, append **after** the \`###\` block:
+
+\`\`\`
+## Plan for tomorrow
+- [specific action]
+\`\`\`
+
+Daily entry = a meaningful log entry. Full structured details belong in atom notes, but the daily entry should be worth reading on its own — not just a one-liner.`;
+
+export function buildRoutingPrompt(
+  transcript: string,
+  candidates: NoteNode[],
+  allAtoms: NoteNode[],
+): string {
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
   const time = now.toTimeString().slice(0, 5);
 
   const candidateBlock = candidates.length > 0
-    ? candidates.map((c) => `
-### [[${c.title}]] — \`${c.id}\`
-Type: ${c.type ?? 'unknown'} | Area: ${c.area ?? 'unknown'} | Status: ${c.status ?? 'unknown'}
+    ? candidates.map((c) => `### [[${c.title}]] — \`${c.id}\`
+Type: ${c.type ?? 'unknown'} | Area: ${c.area ?? 'unknown'}
 Tags: ${c.tags.map((t) => `#${t}`).join(' ') || 'none'}
-Summary: ${c.summary}`).join('\n')
+Summary: ${c.summary}`).join('\n\n')
     : '_No existing notes matched this transcript._';
 
+  const existingAtomsBlock = allAtoms.length > 0
+    ? allAtoms.map((n) => `- [[${n.title}]] → \`${n.id}\``).join('\n')
+    : '_No atoms in vault yet._';
+
   return `Today: ${today}  Current time: ${time}
+
+EXISTING ATOMS (check these before creating new notes — update instead of duplicate):
+${existingAtomsBlock}
 
 ## Voice Transcript
 "${transcript}"
 
-## Candidate Atoms from Vault (ranked by relevance)
+## Top Matching Candidates
 ${candidateBlock}
 
 ## Instructions
 
-**\`daily_entry\`**: Write a \`## ${time}\` block (2-4 lines max). Include [[wikilinks]] to any atoms touched. Add \`- [ ]\` tasks for action items.
+**\`daily_entry\`**: Use format \`### ${time} — <descriptive title>\` with **What happened**, optional **Thoughts / feelings**, optional **Key insight / next step**, and [[wikilinks]] to atoms. Do NOT wrap in \`## Log\` — the writer does that. If there are concrete plans, add a \`## Plan for tomorrow\` block after the \`###\` entry.
 
-**\`atom_content\`**:
-- If **create_atom**: write the complete note with ALL frontmatter fields (title, type, area, status, tags, date, updated, aliases).
-- If **update_atom**: first line must be \`updated: ${today}\`, then write the new \`## ${today}\` section to append.
-- If **log_only**: leave this empty string.
-
-Prefer \`log_only\` for casual observations or one-liners.
-Prefer \`update_atom\` or \`create_atom\` for people, projects, decisions, or recurring concepts.`;
+**\`notes\`**: Decide how many atomic notes this content warrants. For each distinct concept (person, project, decision, health journey, etc.) create or update one atom. Cross-link related atoms using [[wikilinks]]. Empty array if nothing warrants a permanent note.`;
 }

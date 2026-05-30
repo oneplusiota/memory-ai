@@ -12,10 +12,14 @@ export type NoteNode = {
   status?: string;  // active | dormant | archived
 };
 
+export type NoteWriteOp = {
+  action: 'create_atom' | 'update_atom';
+  path: string;
+  content: string;
+};
+
 export type RoutingDecision = {
-  action: 'update_atom' | 'create_atom' | 'log_only' | 'link_notes';
-  target_note: string;
-  atom_content: string;
+  notes: NoteWriteOp[];
   daily_entry: string;
   confidence: 'high' | 'medium' | 'low';
   reasoning: string;
@@ -53,13 +57,8 @@ export type OrbState = 'idle' | 'listening' | 'thinking' | 'responding' | 'pause
 
 export type LLMProvider = 'gemini' | 'groq';
 
-export type VaultStats = {
-  total: number;
-  atoms: number;
-  daily: number;
-  conversations: number;
-  topTags: string[];
-};
+export type ConversationMode = 'journal' | 'coach' | 'analyst' | 'devil';
+
 
 export type AppState =
   | 'idle'

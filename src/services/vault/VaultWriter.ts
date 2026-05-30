@@ -1,24 +1,44 @@
 import { StorageAccessFramework, EncodingType } from 'expo-file-system/legacy';
-import { getDailyNotePath, getTodayDateString, getTimeHeading, getISOWeek } from '@/utils/dateUtils';
+import { getDailyNotePath, getTodayDateString, getTimeHeading, getISOWeek, getReadableDailyTitle } from '@/utils/dateUtils';
 import type { ConversationMessage } from '@/types';
 
 export async function appendToDailyNote(vaultUri: string, entry: string): Promise<string> {
   const relativePath = getDailyNotePath();
   const existingUri = await resolveFileUri(vaultUri, relativePath);
+  const trimmedEntry = entry.trim();
 
   if (existingUri) {
     const existing = await StorageAccessFramework.readAsStringAsync(existingUri);
-    const updated = existing.trimEnd() + '\n\n' + entry.trim() + '\n';
+    const updated = insertIntoLogSection(existing, trimmedEntry);
     await StorageAccessFramework.writeAsStringAsync(existingUri, updated, {
       encoding: EncodingType.UTF8,
     });
   } else {
     const date = getTodayDateString();
     const week = getISOWeek(new Date());
-    const frontmatter = `---\ntitle: ${date}\ntype: daily\ndate: ${date}\nweek: "${week}"\ntags: [daily]\n---\n\n${entry.trim()}\n`;
-    await writeAtRelativePath(vaultUri, relativePath, frontmatter);
+    const title = getReadableDailyTitle();
+    const content = `---\ntitle: "${title}"\ntype: daily\ndate: ${date}\nweek: "${week}"\ntags: [daily]\n---\n\n# ${title}\n\n## Log\n\n${trimmedEntry}\n`;
+    await writeAtRelativePath(vaultUri, relativePath, content);
   }
   return relativePath;
+}
+
+function insertIntoLogSection(existing: string, entry: string): string {
+  const logMatch = existing.match(/^## Log$/m);
+  if (logMatch && logMatch.index !== undefined) {
+    // Find the start of the next ## section after ## Log
+    const afterLogStart = logMatch.index + '## Log'.length;
+    const afterLog = existing.slice(afterLogStart);
+    const nextSectionMatch = afterLog.match(/\n(?=## )/);
+    if (nextSectionMatch && nextSectionMatch.index !== undefined) {
+      const insertAt = afterLogStart + nextSectionMatch.index;
+      return existing.slice(0, insertAt) + '\n\n' + entry + existing.slice(insertAt);
+    }
+    // No subsequent ## section — append at end
+    return existing.trimEnd() + '\n\n' + entry + '\n';
+  }
+  // No ## Log section found — append one
+  return existing.trimEnd() + '\n\n## Log\n\n' + entry + '\n';
 }
 
 export async function appendToNote(
@@ -164,6 +184,27 @@ export async function readNote(vaultUri: string, relativePath: string): Promise<
     return await StorageAccessFramework.readAsStringAsync(fileUri);
   } catch {
     return null;
+  }
+}
+
+const LIFE_CONTEXT_PATH = 'context/life-context.md';
+
+export async function readLifeContext(vaultUri: string): Promise<string | null> {
+  try {
+    const fileUri = await resolveFileUri(vaultUri, LIFE_CONTEXT_PATH);
+    if (!fileUri) return null;
+    return await StorageAccessFramework.readAsStringAsync(fileUri);
+  } catch {
+    return null;
+  }
+}
+
+export async function writeLifeContext(vaultUri: string, content: string): Promise<void> {
+  const existingUri = await resolveFileUri(vaultUri, LIFE_CONTEXT_PATH);
+  if (existingUri) {
+    await StorageAccessFramework.writeAsStringAsync(existingUri, content, { encoding: EncodingType.UTF8 });
+  } else {
+    await writeAtRelativePath(vaultUri, LIFE_CONTEXT_PATH, content);
   }
 }
 

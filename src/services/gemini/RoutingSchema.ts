@@ -1,18 +1,21 @@
 export const ROUTING_RESPONSE_SCHEMA = {
   type: 'OBJECT',
   properties: {
-    action: {
-      type: 'STRING',
-      enum: ['update_atom', 'create_atom', 'log_only', 'link_notes'],
+    notes: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          action: { type: 'STRING', enum: ['create_atom', 'update_atom'] },
+          path: { type: 'STRING' },
+          content: { type: 'STRING' },
+        },
+        required: ['action', 'path', 'content'],
+      },
     },
-    target_note: { type: 'STRING' },
-    atom_content: { type: 'STRING' },
     daily_entry: { type: 'STRING' },
-    confidence: {
-      type: 'STRING',
-      enum: ['high', 'medium', 'low'],
-    },
+    confidence: { type: 'STRING', enum: ['high', 'medium', 'low'] },
     reasoning: { type: 'STRING' },
   },
-  required: ['action', 'target_note', 'atom_content', 'daily_entry', 'confidence', 'reasoning'],
+  required: ['notes', 'daily_entry', 'confidence', 'reasoning'],
 };
