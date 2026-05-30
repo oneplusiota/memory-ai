@@ -28,7 +28,8 @@
           }
         }
       ],
-      "expo-audio"
+      "expo-audio",
+      "expo-sqlite"
     ]
   }
 }

@@ -86,14 +86,9 @@ memory.ai uses a **factory pattern** — providers are registered adapters, maki
 
 | Model | Tier | Notes |
 |---|---|---|
-| Claude Haiku 3.5 | Paid | Cheapest & fastest |
-| Claude Sonnet 4.5 | Paid | Balanced · recommended |
-| Claude Opus 4.5 ★ | Paid | Most capable 4.5 |
-| Claude Sonnet 4 (stable) ★ | Paid | Latest stable Sonnet 4 |
-| Claude Opus 4 (stable) ★ | Paid | Top quality |
-| Claude 3.5 Sonnet | Paid | Previous gen · widely available |
-| Claude 3.5 Haiku | Paid | Previous gen · fast & cheap |
-| Claude 3.7 Sonnet ★ | Paid | Extended thinking support |
+| Claude Haiku 4.5 | Paid | Cheapest & fastest |
+| Claude Sonnet 4.6 | Paid | Balanced · recommended |
+| Claude Opus 4.8 ★ | Paid | Most capable · highest cost |
 
 ★ = paid / gated model. If your API key doesn't have access, the app shows a clear error message and prompts you to switch models.
 
