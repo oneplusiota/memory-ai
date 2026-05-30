@@ -17,11 +17,25 @@ export function useVault() {
   }, []);
 
   const pickVault = useCallback(async (): Promise<string | null> => {
-    const dir = await Directory.pickDirectoryAsync();
-    if (!dir) return null;
-    await SecureStore.setItemAsync(VAULT_URI_KEY, dir.uri);
-    setVaultUri(dir.uri);
-    return dir.uri;
+    try {
+      const dir = await Directory.pickDirectoryAsync();
+      if (!dir) return null;
+      await SecureStore.setItemAsync(VAULT_URI_KEY, dir.uri);
+      setVaultUri(dir.uri);
+      return dir.uri;
+    } catch (e: unknown) {
+      // User dismissed the picker — not an error worth surfacing
+      const msg = e instanceof Error ? e.message.toLowerCase() : '';
+      if (
+        msg.includes('cancel') ||
+        msg.includes('dismiss') ||
+        msg.includes('user denied') ||
+        msg.includes('aborted')
+      ) {
+        return null;
+      }
+      throw e;
+    }
   }, []);
 
   const clearVault = useCallback(async () => {

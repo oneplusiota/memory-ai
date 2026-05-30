@@ -335,10 +335,14 @@ export function SettingsScreen() {
   }, []);
 
   const handlePickVault = useCallback(async () => {
-    const uri = await pickVault();
-    if (!uri) return;
-    setSnack('Vault connected! Building index…');
-    await rebuildIndex(uri);
+    try {
+      const uri = await pickVault();
+      if (!uri) return;           // dismissed — do nothing silently
+      setSnack('Vault connected! Building index…');
+      await rebuildIndex(uri);
+    } catch (e: any) {
+      setSnack(`Could not open vault: ${e?.message ?? 'Unknown error'}`);
+    }
   }, [pickVault, rebuildIndex]);
 
   return (
@@ -451,34 +455,12 @@ export function SettingsScreen() {
         {/* ── VAULT ── */}
         <SectionHeader title="VAULT" />
         <View style={styles.card}>
-          {vaultUri ? (
-            <>
-              <SettingRow
-                icon="folder-refresh-outline"
-                label="Re-index Vault"
-                value={noteCount > 0 ? `${noteCount} notes` : (indexing ? 'Indexing…' : undefined)}
-                onPress={() => rebuildIndex(vaultUri)}
-              />
-              <View style={styles.cardDivider} />
-              <SettingRow
-                icon="link-off"
-                label="Disconnect Vault"
-                danger
-                onPress={async () => {
-                  await clearVault();
-                  await clearIndex();
-                  setNoteCount(0);
-                  setSnack('Vault disconnected.');
-                }}
-              />
-            </>
-          ) : (
-            <SettingRow
-              icon="folder-open-outline"
-              label="Connect Vault Folder"
-              onPress={handlePickVault}
-            />
-          )}
+          <SettingRow
+            icon="folder-outline"
+            label="Vault"
+            value={vaultUri ? (noteCount > 0 ? `${noteCount} notes indexed` : 'Connected') : 'Not connected'}
+            onPress={() => setOpenModal('vault')}
+          />
         </View>
 
         <Divider />
@@ -596,6 +578,103 @@ export function SettingsScreen() {
         onClose={() => setOpenModal(null)}
       />
 
+      {/* ── Vault modal ── */}
+      <Modal visible={openModal === 'vault'} transparent animationType="slide" onRequestClose={() => setOpenModal(null)}>
+        <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setOpenModal(null)} />
+        <View style={styles.modalSheet}>
+          <View style={styles.modalHandle} />
+          <Text style={styles.modalTitle}>Vault</Text>
+
+          {vaultUri ? (
+            <>
+              {/* Re-index */}
+              <TouchableOpacity
+                style={styles.vaultActionRow}
+                activeOpacity={0.7}
+                onPress={() => {
+                  setOpenModal(null);
+                  rebuildIndex(vaultUri);
+                }}
+              >
+                <View style={styles.vaultActionIcon}>
+                  <MaterialCommunityIcons name="folder-refresh-outline" size={20} color="#6D28D9" />
+                </View>
+                <View style={styles.vaultActionText}>
+                  <Text style={styles.vaultActionLabel}>Re-index Vault</Text>
+                  <Text style={styles.vaultActionDesc}>
+                    {indexing ? 'Indexing…' : noteCount > 0 ? `${noteCount} notes currently indexed` : 'Scan vault and rebuild index'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <View style={styles.vaultActionDivider} />
+
+              {/* Connect new */}
+              <TouchableOpacity
+                style={styles.vaultActionRow}
+                activeOpacity={0.7}
+                onPress={() => {
+                  setOpenModal(null);
+                  handlePickVault();
+                }}
+              >
+                <View style={styles.vaultActionIcon}>
+                  <MaterialCommunityIcons name="folder-open-outline" size={20} color="#6D28D9" />
+                </View>
+                <View style={styles.vaultActionText}>
+                  <Text style={styles.vaultActionLabel}>Change Vault Folder</Text>
+                  <Text style={styles.vaultActionDesc}>Pick a different folder</Text>
+                </View>
+              </TouchableOpacity>
+
+              <View style={styles.vaultActionDivider} />
+
+              {/* Disconnect */}
+              <TouchableOpacity
+                style={styles.vaultActionRow}
+                activeOpacity={0.7}
+                onPress={async () => {
+                  setOpenModal(null);
+                  await clearVault();
+                  await clearIndex();
+                  setNoteCount(0);
+                  setSnack('Vault disconnected.');
+                }}
+              >
+                <View style={[styles.vaultActionIcon, styles.vaultActionIconDanger]}>
+                  <MaterialCommunityIcons name="link-off" size={20} color="#EF4444" />
+                </View>
+                <View style={styles.vaultActionText}>
+                  <Text style={[styles.vaultActionLabel, styles.vaultActionLabelDanger]}>Disconnect Vault</Text>
+                  <Text style={styles.vaultActionDesc}>Remove vault connection</Text>
+                </View>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <TouchableOpacity
+              style={styles.vaultActionRow}
+              activeOpacity={0.7}
+              onPress={() => {
+                setOpenModal(null);
+                handlePickVault();
+              }}
+            >
+              <View style={styles.vaultActionIcon}>
+                <MaterialCommunityIcons name="folder-open-outline" size={20} color="#6D28D9" />
+              </View>
+              <View style={styles.vaultActionText}>
+                <Text style={styles.vaultActionLabel}>Connect Vault Folder</Text>
+                <Text style={styles.vaultActionDesc}>Pick your Obsidian vault folder</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity style={styles.modalCancel} onPress={() => setOpenModal(null)}>
+            <Text style={styles.modalCancelText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
+
       <Snackbar visible={!!snack} onDismiss={() => setSnack('')} duration={3000}>
         {snack}
       </Snackbar>
@@ -680,4 +759,17 @@ const styles = StyleSheet.create({
   keyModalInput: { backgroundColor: '#FFFFFF', marginBottom: 16 },
   keyModalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8 },
   keyModalBtn: { minWidth: 80 },
+
+  // Vault modal action rows
+  vaultActionRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, gap: 14 },
+  vaultActionDivider: { height: StyleSheet.hairlineWidth, backgroundColor: '#F3F4F6' },
+  vaultActionIcon: {
+    width: 38, height: 38, borderRadius: 10,
+    backgroundColor: '#EDE9FE', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+  },
+  vaultActionIconDanger: { backgroundColor: '#FEE2E2' },
+  vaultActionText: { flex: 1 },
+  vaultActionLabel: { fontSize: 15, fontWeight: '500', color: '#111827' },
+  vaultActionLabelDanger: { color: '#EF4444' },
+  vaultActionDesc: { fontSize: 13, color: '#9CA3AF', marginTop: 2 },
 });
