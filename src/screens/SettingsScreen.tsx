@@ -17,7 +17,7 @@ import {
   saveGeminiModelPref, saveGroqModelPref, saveClaudeModelPref, loadStoredKeys,
 } from '@/services/gemini/GeminiClient';
 import {
-  saveWebSearchProvider, saveTavilyKey, saveGoogleCx,
+  saveWebSearchProvider, saveTavilyKey, saveSerperKey,
   loadStoredWebSearchKeys,
 } from '@/services/tools/WebSearchClient';
 import type { AgentMode, LLMProvider, STTMode, WebSearchProvider } from '@/types';
@@ -82,7 +82,7 @@ const LLM_PROVIDERS: { value: LLMProvider; label: string; desc: string }[] = [
 
 const WEB_SEARCH_PROVIDERS: { value: WebSearchProvider; label: string; desc: string }[] = [
   { value: 'tavily', label: 'Tavily', desc: '1,000 searches/mo free · best for AI' },
-  { value: 'google', label: 'Google Search', desc: '100 queries/day free · Custom Search API' },
+  { value: 'serper', label: 'Serper (Google)', desc: '2,500 queries/mo free · real Google results' },
 ];
 
 const AGENT_MODES: { value: AgentMode; label: string; desc: string }[] = [
@@ -224,7 +224,7 @@ export function SettingsScreen() {
   // Web search state
   const [webSearchProvider, setWebSearchProviderState] = useState<WebSearchProvider>('tavily');
   const [tavilyKey, setTavilyKeyState] = useState('');
-  const [googleSearchCx, setGoogleSearchCxState] = useState('');
+  const [serperKey, setSerperKeyState] = useState('');
 
   // Agent / STT state
   const [agentMode, setAgentModeState] = useState<AgentMode>('agentic');
@@ -245,9 +245,9 @@ export function SettingsScreen() {
       setGroqModelState(stored.groqModel);
       setClaudeModelState(stored.claudeModel);
 
-      const { tavilyKey: tk, googleCx: gcx, provider: wsp } = await loadStoredWebSearchKeys();
+      const { tavilyKey: tk, serperKey: sk, provider: wsp } = await loadStoredWebSearchKeys();
       if (tk) setTavilyKeyState(tk);
-      if (gcx) setGoogleSearchCxState(gcx);
+      if (sk) setSerperKeyState(sk);
       setWebSearchProviderState(wsp);
 
       const am = await SecureStore.getItemAsync(AGENT_MODE_KEY);
@@ -314,12 +314,12 @@ export function SettingsScreen() {
     setSnack('Tavily API key saved.');
   }, [keyDraft]);
 
-  const handleSaveGoogleCx = useCallback(async () => {
-    const cx = keyDraft.trim();
-    if (!cx) return;
-    await saveGoogleCx(cx);
-    setGoogleSearchCxState(cx);
-    setSnack('Google Search Engine ID saved.');
+  const handleSaveSerperKey = useCallback(async () => {
+    const key = keyDraft.trim();
+    if (!key) return;
+    await saveSerperKey(key);
+    setSerperKeyState(key);
+    setSnack('Serper API key saved.');
   }, [keyDraft]);
 
   const handleSelectWebSearch = useCallback(async (p: WebSearchProvider) => {
@@ -480,10 +480,10 @@ export function SettingsScreen() {
             />
           ) : (
             <SettingRow
-              icon="identifier"
-              label="Search Engine ID (cx)"
-              value={googleSearchCx ? `…${googleSearchCx.slice(-6)}` : 'Not set'}
-              onPress={() => openKeyModal('google_cx', googleSearchCx)}
+              icon="key-outline"
+              label="Serper API Key"
+              value={maskKey(serperKey)}
+              onPress={() => openKeyModal('serper_key', serperKey)}
             />
           )}
         </View>
@@ -650,12 +650,12 @@ export function SettingsScreen() {
         onClose={() => setOpenModal(null)}
       />
       <KeyModal
-        visible={openModal === 'google_cx'}
-        title="Google Search Engine ID"
-        placeholder="e.g. 017576662512468239146:omuauf_lfve"
+        visible={openModal === 'serper_key'}
+        title="Serper API Key"
+        placeholder="Get yours free at serper.dev"
         value={keyDraft}
         onChange={setKeyDraft}
-        onSave={handleSaveGoogleCx}
+        onSave={handleSaveSerperKey}
         onClose={() => setOpenModal(null)}
       />
 

@@ -58,7 +58,7 @@ export type ConversationMode = 'journal' | 'coach' | 'analyst' | 'devil' | 'tool
 
 export type AgentMode = 'agentic' | 'single';
 
-export type WebSearchProvider = 'tavily' | 'google';
+export type WebSearchProvider = 'tavily' | 'serper';
 
 // ── Tool system ────────────────────────────────────────────────────────────
 
