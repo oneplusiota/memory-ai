@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useVoice } from './useVoice';
 import { useVault } from './useVault';
-import { hybridSearch } from '@/services/search/HybridSearch';
-import { getIndex } from '@/services/indexer/IndexStore';
+import { searchNotes } from '@/services/search/HybridSearch';
+import { getAllNotes } from '@/services/db/VaultDB';
+import { embed as gloveEmbed, isReady as gloveReady } from '@/services/search/GloveService';
 import { chat, saveConversation } from '@/services/gemini/ConversationClient';
 import { buildSystemPrompt } from '@/services/gemini/ConversationPrompt';
 import { saveConversationFile, readConversationMessages, overwriteConversationFile, readLifeContext } from '@/services/vault/VaultWriter';
@@ -205,10 +206,11 @@ export function useConversation(sttMode: STTMode = 'native', initialMode?: Conve
         );
         setLastSuggestSave(false);
       } else {
-        const index = getIndex();
-        const results = hybridSearch(index, finalText, undefined, 5);
+        const allNotes = await getAllNotes();
+        const queryEmbedding = gloveReady() ? gloveEmbed(finalText) : null;
+        const results = searchNotes(allNotes, finalText, 3, queryEmbedding ?? undefined);
         const notes = results.map((r) => r.note);
-        const allAtoms = Object.values(index.notes).filter(n => n.id.startsWith('atoms/'));
+        const allAtoms = allNotes.filter(n => n.id.startsWith('atoms/'));
         const response = await chat(withUser, notes, finalText, allAtoms, lifeContextRef.current ?? undefined, conversationMode);
         replyText = response.reply;
         setLastSuggestSave(response.suggest_save);
@@ -244,8 +246,8 @@ export function useConversation(sttMode: STTMode = 'native', initialMode?: Conve
   } | null> => {
     if (!vaultUri || messages.length === 0) return null;
     try {
-      const index = getIndex();
-      const allAtoms = Object.values(index.notes).filter(n => n.id.startsWith('atoms/'));
+      const allNotes = await getAllNotes();
+      const allAtoms = allNotes.filter(n => n.id.startsWith('atoms/'));
       const decision = await saveConversation(messages, allAtoms);
       return { decision, vaultUri, conversationFilePath: conversationFilePathRef.current };
     } catch (e: any) {

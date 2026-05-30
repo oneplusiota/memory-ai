@@ -41,6 +41,7 @@ export function ConversationScreen() {
   const flatListRef = useRef<FlatList>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const keyboardHeight = useRef(new Animated.Value(0)).current;
+  const isSubmittingRef = useRef(false);
 
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', (e) => {
@@ -109,8 +110,13 @@ export function ConversationScreen() {
 
   const handleSend = async () => {
     const text = transcript.trim();
-    if (!text || isSending) return;
-    await sendMessage(text);
+    if (!text || isSending || isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+    try {
+      await sendMessage(text);
+    } finally {
+      isSubmittingRef.current = false;
+    }
   };
 
   const handleSaveToVault = async () => {
