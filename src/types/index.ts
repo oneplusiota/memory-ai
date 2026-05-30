@@ -47,24 +47,11 @@ export type ConversationMessage = {
 
 export type ConversationResponse = {
   reply: string;
-  intent: 'answer' | 'acknowledge' | 'clarify';
   suggest_save: boolean;
 };
 
 export type STTMode = 'native' | 'gemini-audio' | 'native-corrected';
 
-export type OrbState = 'idle' | 'listening' | 'thinking' | 'responding' | 'paused';
-
 export type LLMProvider = 'gemini' | 'groq';
 
 export type ConversationMode = 'journal' | 'coach' | 'analyst' | 'devil';
-
-
-export type AppState =
-  | 'idle'
-  | 'listening'
-  | 'processing'
-  | 'confirming'
-  | 'writing'
-  | 'done'
-  | 'error';

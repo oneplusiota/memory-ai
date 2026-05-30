@@ -1,5 +1,3 @@
-import type { NoteNode } from '@/types';
-
 export const SYSTEM_PROMPT = `You are an intelligent knowledge assistant for a personal Obsidian vault using a Zettelkasten + Daily Notes system.
 
 ## Vault Structure
@@ -96,41 +94,3 @@ If the conversation contains concrete plans for the future, append **after** the
 \`\`\`
 
 Daily entry = a meaningful log entry. Full structured details belong in atom notes, but the daily entry should be worth reading on its own — not just a one-liner.`;
-
-export function buildRoutingPrompt(
-  transcript: string,
-  candidates: NoteNode[],
-  allAtoms: NoteNode[],
-): string {
-  const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-  const time = now.toTimeString().slice(0, 5);
-
-  const candidateBlock = candidates.length > 0
-    ? candidates.map((c) => `### [[${c.title}]] — \`${c.id}\`
-Type: ${c.type ?? 'unknown'} | Area: ${c.area ?? 'unknown'}
-Tags: ${c.tags.map((t) => `#${t}`).join(' ') || 'none'}
-Summary: ${c.summary}`).join('\n\n')
-    : '_No existing notes matched this transcript._';
-
-  const existingAtomsBlock = allAtoms.length > 0
-    ? allAtoms.map((n) => `- [[${n.title}]] → \`${n.id}\``).join('\n')
-    : '_No atoms in vault yet._';
-
-  return `Today: ${today}  Current time: ${time}
-
-EXISTING ATOMS (check these before creating new notes — update instead of duplicate):
-${existingAtomsBlock}
-
-## Voice Transcript
-"${transcript}"
-
-## Top Matching Candidates
-${candidateBlock}
-
-## Instructions
-
-**\`daily_entry\`**: Use format \`### ${time} — <descriptive title>\` with **What happened**, optional **Thoughts / feelings**, optional **Key insight / next step**, and [[wikilinks]] to atoms. Do NOT wrap in \`## Log\` — the writer does that. If there are concrete plans, add a \`## Plan for tomorrow\` block after the \`###\` entry.
-
-**\`notes\`**: Decide how many atomic notes this content warrants. For each distinct concept (person, project, decision, health journey, etc.) create or update one atom. Cross-link related atoms using [[wikilinks]]. Empty array if nothing warrants a permanent note.`;
-}

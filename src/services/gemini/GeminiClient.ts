@@ -1,5 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
-import { setGeminiKey, setGeminiModel, setGroqKey, setActiveProvider } from '@/services/llm/LLMClient';
+import { setGeminiKey, setGeminiModel, setGroqKey, setActiveProvider, llmChat } from '@/services/llm/LLMClient';
 import type { LLMProvider } from '@/types';
 
 const GEMINI_KEY_STORE = 'gemini_api_key';
@@ -8,10 +8,6 @@ const GEMINI_MODEL_STORE = 'gemini_model';
 const ACTIVE_PROVIDER_STORE = 'active_provider';
 
 let cachedGeminiKey: string | null = null;
-
-export function getApiKey(): string | null {
-  return cachedGeminiKey;
-}
 
 export async function loadAllProviderConfig(): Promise<void> {
   const geminiKey = await SecureStore.getItemAsync(GEMINI_KEY_STORE);
@@ -78,23 +74,17 @@ export async function transcribeAudio(base64Audio: string, mimeType: string = 'a
   return (data.candidates?.[0]?.content?.parts?.[0]?.text ?? '').trim();
 }
 
-// Gemini-only: transcript correction
+// Transcript correction — uses whichever LLM provider is currently active
 export async function correctTranscript(rawTranscript: string): Promise<string> {
-  if (!cachedGeminiKey) throw new Error('No Gemini API key for correction.');
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${cachedGeminiKey}`,
+  const result = await llmChat([
     {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          role: 'user',
-          parts: [{ text: `Fix any speech recognition errors in this transcript. Preserve the original meaning exactly. Return only the corrected text, nothing else:\n\n${rawTranscript}` }],
-        }],
-      }),
+      role: 'system',
+      content: 'You are a speech-to-text correction assistant. Fix recognition errors while preserving the original meaning exactly. Return only the corrected text, nothing else.',
     },
-  );
-  if (!response.ok) throw new Error(`Gemini correction error ${response.status}`);
-  const data = await response.json();
-  return (data.candidates?.[0]?.content?.parts?.[0]?.text ?? rawTranscript).trim();
+    {
+      role: 'user',
+      content: rawTranscript,
+    },
+  ]);
+  return result.trim() || rawTranscript;
 }

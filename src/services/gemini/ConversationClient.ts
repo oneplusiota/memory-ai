@@ -13,7 +13,6 @@ import { sanitizeDates, getTodayDateString, getTimeHeading } from '@/utils/dateU
 
 const CONVERSATION_SCHEMA_DESCRIPTION = `{
   "reply": "string — your response to the user",
-  "intent": "answer" | "acknowledge" | "clarify",
   "suggest_save": true | false
 }`;
 

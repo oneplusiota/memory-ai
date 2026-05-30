@@ -144,10 +144,9 @@ export const CONVERSATION_RESPONSE_SCHEMA = {
   type: 'OBJECT',
   properties: {
     reply: { type: 'STRING' },
-    intent: { type: 'STRING', enum: ['answer', 'acknowledge', 'clarify'] },
     suggest_save: { type: 'BOOLEAN' },
   },
-  required: ['reply', 'intent', 'suggest_save'],
+  required: ['reply', 'suggest_save'],
 };
 
 export function buildSavePrompt(
