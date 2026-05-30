@@ -1,11 +1,13 @@
 import * as SecureStore from 'expo-secure-store';
-import { setGeminiKey, setGeminiModel, setGroqKey, setGroqModel, setActiveProvider, llmChat } from '@/services/llm/LLMClient';
+import { setGeminiKey, setGeminiModel, setGroqKey, setGroqModel, setClaudeKey, setClaudeModel, setActiveProvider, llmChat } from '@/services/llm/LLMClient';
 import type { LLMProvider } from '@/types';
 
 const GEMINI_KEY_STORE = 'gemini_api_key';
 const GROQ_KEY_STORE = 'groq_api_key';
+const CLAUDE_KEY_STORE = 'claude_api_key';
 const GEMINI_MODEL_STORE = 'gemini_model';
 const GROQ_MODEL_STORE = 'groq_model';
+const CLAUDE_MODEL_STORE = 'claude_model';
 const ACTIVE_PROVIDER_STORE = 'active_provider';
 
 let cachedGeminiKey: string | null = null;
@@ -13,15 +15,18 @@ let cachedGeminiKey: string | null = null;
 export async function loadAllProviderConfig(): Promise<void> {
   const geminiKey = await SecureStore.getItemAsync(GEMINI_KEY_STORE);
   const groqKey = await SecureStore.getItemAsync(GROQ_KEY_STORE);
+  const claudeKey = await SecureStore.getItemAsync(CLAUDE_KEY_STORE);
   const geminiModel = await SecureStore.getItemAsync(GEMINI_MODEL_STORE);
-  const activeProvider = (await SecureStore.getItemAsync(ACTIVE_PROVIDER_STORE)) as LLMProvider | null;
-
   const groqModel = await SecureStore.getItemAsync(GROQ_MODEL_STORE);
+  const claudeModel = await SecureStore.getItemAsync(CLAUDE_MODEL_STORE);
+  const activeProvider = (await SecureStore.getItemAsync(ACTIVE_PROVIDER_STORE)) as LLMProvider | null;
 
   if (geminiKey) { cachedGeminiKey = geminiKey; setGeminiKey(geminiKey); }
   if (groqKey) setGroqKey(groqKey);
+  if (claudeKey) setClaudeKey(claudeKey);
   if (geminiModel) setGeminiModel(geminiModel);
   if (groqModel) setGroqModel(groqModel);
+  if (claudeModel) setClaudeModel(claudeModel);
   if (activeProvider) setActiveProvider(activeProvider);
 }
 
@@ -51,13 +56,25 @@ export async function saveGroqModelPref(model: string): Promise<void> {
   await SecureStore.setItemAsync(GROQ_MODEL_STORE, model);
 }
 
-export async function loadStoredKeys(): Promise<{ geminiKey: string; groqKey: string; activeProvider: LLMProvider; geminiModel: string; groqModel: string }> {
+export async function saveClaudeKey(key: string): Promise<void> {
+  setClaudeKey(key);
+  await SecureStore.setItemAsync(CLAUDE_KEY_STORE, key);
+}
+
+export async function saveClaudeModelPref(model: string): Promise<void> {
+  setClaudeModel(model);
+  await SecureStore.setItemAsync(CLAUDE_MODEL_STORE, model);
+}
+
+export async function loadStoredKeys(): Promise<{ geminiKey: string; groqKey: string; claudeKey: string; activeProvider: LLMProvider; geminiModel: string; groqModel: string; claudeModel: string }> {
   const geminiKey = (await SecureStore.getItemAsync(GEMINI_KEY_STORE)) ?? '';
   const groqKey = (await SecureStore.getItemAsync(GROQ_KEY_STORE)) ?? '';
+  const claudeKey = (await SecureStore.getItemAsync(CLAUDE_KEY_STORE)) ?? '';
   const activeProvider = ((await SecureStore.getItemAsync(ACTIVE_PROVIDER_STORE)) ?? 'gemini') as LLMProvider;
   const geminiModel = (await SecureStore.getItemAsync(GEMINI_MODEL_STORE)) ?? 'gemini-2.0-flash';
   const groqModel = (await SecureStore.getItemAsync(GROQ_MODEL_STORE)) ?? 'llama-3.3-70b-versatile';
-  return { geminiKey, groqKey, activeProvider, geminiModel, groqModel };
+  const claudeModel = (await SecureStore.getItemAsync(CLAUDE_MODEL_STORE)) ?? 'claude-sonnet-4-5';
+  return { geminiKey, groqKey, claudeKey, activeProvider, geminiModel, groqModel, claudeModel };
 }
 
 // Gemini-only: audio transcription (no Groq equivalent)

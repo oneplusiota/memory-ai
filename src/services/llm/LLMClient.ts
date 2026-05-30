@@ -1,31 +1,110 @@
-import type { LLMProvider, ToolCall, ToolDefinition, ToolResult } from '@/types';
+import type { LLMProvider, ToolCall, ToolDefinition, ToolResult } from "@/types";
 
-export type LLMMessage = { role: 'system' | 'user' | 'assistant'; content: string };
+export type LLMMessage = { role: "system" | "user" | "assistant"; content: string };
 
 export type LLMResponse =
-  | { type: 'text'; text: string }
-  | { type: 'tool_calls'; toolCalls: ToolCall[] };
+  | { type: "text"; text: string }
+  | { type: "tool_calls"; toolCalls: ToolCall[] };
 
 export class LLMQuotaError extends Error {
   constructor(provider: string) {
     super(`${provider} daily quota exceeded. Switch providers in Settings or try again tomorrow.`);
-    this.name = 'LLMQuotaError';
+    this.name = "LLMQuotaError";
   }
 }
 
 export class LLMAuthError extends Error {
   constructor(provider: string) {
     super(`${provider} API key is invalid. Check your key in Settings.`);
-    this.name = 'LLMAuthError';
+    this.name = "LLMAuthError";
+  }
+}
+
+export class LLMModelAccessError extends Error {
+  constructor(provider: string, model: string) {
+    super(`Your ${provider} plan does not include access to ${model}. Upgrade your account or choose a different model in Settings.`);
+    this.name = "LLMModelAccessError";
+  }
+}
+
+// ── Shared error helper ────────────────────────────────────────────────────
+
+/** Parses a non-ok API response and throws the most specific error type. Never returns. */
+function throwOnApiError(status: number, rawBody: string, provider: string, model: string): never {
+  if (status === 429) throw new LLMQuotaError(provider);
+  if (status === 401) throw new LLMAuthError(provider);
+
+  if (status === 403) {
+    let parsed: Record<string, unknown> = {};
+    try { parsed = JSON.parse(rawBody); } catch { /* ignore */ }
+
+    if (isModelAccessDenied(parsed, provider)) {
+      throw new LLMModelAccessError(provider, model);
+    }
+    throw new LLMAuthError(provider);
+  }
+
+  throw new Error(`${provider} ${status}: ${rawBody}`);
+}
+
+function isModelAccessDenied(parsed: Record<string, unknown>, provider: string): boolean {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const p = parsed as any;
+  if (provider === "Claude") {
+    return p?.error?.type === "permission_error";
+  }
+  if (provider === "Gemini") {
+    const msg: string = (p?.error?.message ?? "").toLowerCase();
+    return p?.error?.status === "PERMISSION_DENIED" && (msg.includes("model") || msg.includes("not found"));
+  }
+  if (provider === "Groq") {
+    const msg: string = (p?.error?.message ?? "").toLowerCase();
+    return msg.includes("model") && (msg.includes("not found") || msg.includes("not available") || msg.includes("permission"));
+  }
+  return false;
+}
+
+// ── Adapter interface ──────────────────────────────────────────────────────
+
+export interface LLMAdapter {
+  chat(
+    messages: LLMMessage[],
+    jsonSchema?: object,
+    jsonSchemaDescription?: string,
+  ): Promise<string>;
+
+  chatWithTools(
+    messages: LLMMessage[],
+    tools: ToolDefinition[],
+    toolResults?: ToolResult[],
+  ): Promise<LLMResponse>;
+}
+
+// ── Factory ────────────────────────────────────────────────────────────────
+
+export class LLMAdapterFactory {
+  private static readonly registry = new Map<LLMProvider, LLMAdapter>();
+
+  static register(provider: LLMProvider, adapter: LLMAdapter): void {
+    this.registry.set(provider, adapter);
+  }
+
+  static get(provider: LLMProvider): LLMAdapter {
+    const adapter = this.registry.get(provider);
+    if (!adapter) throw new Error(`No LLM adapter registered for provider: ${provider}`);
+    return adapter;
   }
 }
 
 // ── Module-level state ─────────────────────────────────────────────────────
-let activeProvider: LLMProvider = 'gemini';
-let geminiKey = '';
-let geminiModel = 'gemini-2.0-flash';
-let groqKey = '';
-let groqModel = 'llama-3.3-70b-versatile';
+
+let activeProvider: LLMProvider = "gemini";
+let geminiKey = "";
+let geminiModel = "gemini-2.0-flash";
+let groqKey = "";
+let groqModel = "llama-3.3-70b-versatile";
+let claudeKey = "";
+let claudeModel = "claude-sonnet-4-5";
 
 export function setActiveProvider(p: LLMProvider) { activeProvider = p; }
 export function getActiveProvider(): LLMProvider { return activeProvider; }
@@ -33,140 +112,35 @@ export function setGeminiKey(k: string) { geminiKey = k; }
 export function setGeminiModel(m: string) { geminiModel = m; }
 export function setGroqKey(k: string) { groqKey = k; }
 export function setGroqModel(m: string) { groqModel = m; }
+export function setClaudeKey(k: string) { claudeKey = k; }
+export function setClaudeModel(m: string) { claudeModel = m; }
 
-// ── Unified chat call ──────────────────────────────────────────────────────
+// ── Public facade ──────────────────────────────────────────────────────────
 
-/**
- * Standard JSON-mode chat (existing callers unchanged).
- * @param messages   Conversation in OpenAI format (system/user/assistant)
- * @param jsonSchema Gemini schema object (used when provider = gemini)
- * @param jsonSchemaDescription Plain-text schema description appended to system prompt (used when provider = groq)
- */
 export async function llmChat(
   messages: LLMMessage[],
   jsonSchema?: object,
   jsonSchemaDescription?: string,
 ): Promise<string> {
-  if (activeProvider === 'groq') {
-    return callGroq(messages, jsonSchema ? jsonSchemaDescription : undefined);
-  }
-  return callGemini(messages, jsonSchema);
+  return LLMAdapterFactory.get(activeProvider).chat(messages, jsonSchema, jsonSchemaDescription);
 }
 
-/**
- * Tool-aware chat. Returns either a text reply or a list of tool calls.
- * When tool calls are returned, the caller should execute them and call this
- * again with the results appended as tool result messages.
- *
- * @param messages    Conversation including any prior tool result turns
- * @param tools       Tool definitions available to the model
- * @param toolResults Results from the previous tool call round (optional)
- */
 export async function llmChatWithTools(
   messages: LLMMessage[],
   tools: ToolDefinition[],
   toolResults?: ToolResult[],
 ): Promise<LLMResponse> {
-  if (activeProvider === 'groq') {
-    return callGroqWithTools(messages, tools, toolResults);
-  }
-  return callGeminiWithTools(messages, tools, toolResults);
+  return LLMAdapterFactory.get(activeProvider).chatWithTools(messages, tools, toolResults);
 }
 
 // ── Gemini adapter ─────────────────────────────────────────────────────────
-
-async function callGemini(messages: LLMMessage[], jsonSchema?: object): Promise<string> {
-  if (!geminiKey) throw new LLMAuthError('Gemini');
-
-  const systemMsg = messages.find(m => m.role === 'system');
-  const turns = messages.filter(m => m.role !== 'system');
-
-  const body: Record<string, unknown> = {
-    contents: turns.map(m => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
-    })),
-  };
-
-  if (systemMsg) {
-    body.system_instruction = { parts: [{ text: systemMsg.content }] };
-  }
-
-  if (jsonSchema) {
-    body.generationConfig = {
-      responseMimeType: 'application/json',
-      responseSchema: jsonSchema,
-    };
-  }
-
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiKey}`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
-  );
-
-  if (!response.ok) {
-    const err = await response.text();
-    if (response.status === 429) throw new LLMQuotaError('Gemini');
-    if (response.status === 401 || response.status === 403) throw new LLMAuthError('Gemini');
-    throw new Error(`Gemini ${response.status}: ${err}`);
-  }
-
-  const data = await response.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-}
-
-// ── Groq adapter (OpenAI-compatible) ──────────────────────────────────────
-
-async function callGroq(messages: LLMMessage[], jsonSchemaDescription?: string): Promise<string> {
-  if (!groqKey) throw new LLMAuthError('Groq');
-
-  // Inject schema description into system prompt so Llama follows the structure
-  const finalMessages = jsonSchemaDescription
-    ? messages.map(m =>
-        m.role === 'system'
-          ? { ...m, content: `${m.content}\n\nYou MUST respond with valid JSON matching this schema:\n${jsonSchemaDescription}` }
-          : m,
-      )
-    : messages;
-
-  const body: Record<string, unknown> = {
-    model: groqModel,
-    messages: finalMessages,
-    temperature: 0.2,
-  };
-
-  if (jsonSchemaDescription) {
-    body.response_format = { type: 'json_object' };
-  }
-
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${groqKey}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    if (response.status === 429) throw new LLMQuotaError('Groq');
-    if (response.status === 401 || response.status === 403) throw new LLMAuthError('Groq');
-    throw new Error(`Groq ${response.status}: ${err}`);
-  }
-
-  const data = await response.json();
-  return data.choices?.[0]?.message?.content ?? '';
-}
-
-// ── Gemini tool-calling adapter ────────────────────────────────────────────
 
 function toGeminiTool(tool: ToolDefinition): object {
   const properties: Record<string, unknown> = {};
   const required: string[] = [];
   for (const p of tool.parameters) {
     properties[p.name] = {
-      type: (p.type ?? 'string').toUpperCase(),
+      type: (p.type ?? "string").toUpperCase(),
       description: p.description,
     };
     if (p.required !== false) required.push(p.name);
@@ -174,143 +148,354 @@ function toGeminiTool(tool: ToolDefinition): object {
   return {
     name: tool.name,
     description: tool.description,
-    parameters: { type: 'OBJECT', properties, required },
+    parameters: { type: "OBJECT", properties, required },
   };
 }
 
-async function callGeminiWithTools(
-  messages: LLMMessage[],
-  tools: ToolDefinition[],
-  toolResults?: ToolResult[],
-): Promise<LLMResponse> {
-  if (!geminiKey) throw new LLMAuthError('Gemini');
+class GeminiAdapter implements LLMAdapter {
+  async chat(messages: LLMMessage[], jsonSchema?: object): Promise<string> {
+    if (!geminiKey) throw new LLMAuthError("Gemini");
 
-  const systemMsg = messages.find(m => m.role === 'system');
-  const turns = messages.filter(m => m.role !== 'system');
+    const systemMsg = messages.find(m => m.role === "system");
+    const turns = messages.filter(m => m.role !== "system");
 
-  // Build contents array; append tool result turns if present
-  const contents: object[] = turns.map(m => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }],
-  }));
-
-  if (toolResults && toolResults.length > 0) {
-    contents.push({
-      role: 'user',
-      parts: toolResults.map(r => ({
-        functionResponse: { name: r.name, response: { content: r.output } },
-      })),
-    });
-  }
-
-  const body: Record<string, unknown> = {
-    contents,
-    tools: [{ function_declarations: tools.map(toGeminiTool) }],
-  };
-
-  if (systemMsg) {
-    body.system_instruction = { parts: [{ text: systemMsg.content }] };
-  }
-
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiKey}`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
-  );
-
-  if (!response.ok) {
-    const err = await response.text();
-    if (response.status === 429) throw new LLMQuotaError('Gemini');
-    if (response.status === 401 || response.status === 403) throw new LLMAuthError('Gemini');
-    throw new Error(`Gemini ${response.status}: ${err}`);
-  }
-
-  const data = await response.json();
-  const parts: { text?: string; functionCall?: { name: string; args: Record<string, unknown> } }[] =
-    data.candidates?.[0]?.content?.parts ?? [];
-
-  const fnCalls = parts.filter(p => p.functionCall);
-  if (fnCalls.length > 0) {
-    return {
-      type: 'tool_calls',
-      toolCalls: fnCalls.map((p, i) => ({
-        id: `gemini-tc-${Date.now()}-${i}`,
-        name: p.functionCall!.name,
-        args: p.functionCall!.args ?? {},
+    const body: Record<string, unknown> = {
+      contents: turns.map(m => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
       })),
     };
+
+    if (systemMsg) {
+      body.system_instruction = { parts: [{ text: systemMsg.content }] };
+    }
+
+    if (jsonSchema) {
+      body.generationConfig = {
+        responseMimeType: "application/json",
+        responseSchema: jsonSchema,
+      };
+    }
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiKey}`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+    );
+
+    if (!response.ok) {
+      throwOnApiError(response.status, await response.text(), "Gemini", geminiModel);
+    }
+
+    const data = await response.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
   }
 
-  return { type: 'text', text: parts.find(p => p.text)?.text ?? '' };
+  async chatWithTools(
+    messages: LLMMessage[],
+    tools: ToolDefinition[],
+    toolResults?: ToolResult[],
+  ): Promise<LLMResponse> {
+    if (!geminiKey) throw new LLMAuthError("Gemini");
+
+    const systemMsg = messages.find(m => m.role === "system");
+    const turns = messages.filter(m => m.role !== "system");
+
+    const contents: object[] = turns.map(m => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }],
+    }));
+
+    if (toolResults && toolResults.length > 0) {
+      contents.push({
+        role: "user",
+        parts: toolResults.map(r => ({
+          functionResponse: { name: r.name, response: { content: r.output } },
+        })),
+      });
+    }
+
+    const body: Record<string, unknown> = {
+      contents,
+      tools: [{ function_declarations: tools.map(toGeminiTool) }],
+    };
+
+    if (systemMsg) {
+      body.system_instruction = { parts: [{ text: systemMsg.content }] };
+    }
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiKey}`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+    );
+
+    if (!response.ok) {
+      throwOnApiError(response.status, await response.text(), "Gemini", geminiModel);
+    }
+
+    const data = await response.json();
+    const parts: { text?: string; functionCall?: { name: string; args: Record<string, unknown> } }[] =
+      data.candidates?.[0]?.content?.parts ?? [];
+
+    const fnCalls = parts.filter(p => p.functionCall);
+    if (fnCalls.length > 0) {
+      return {
+        type: "tool_calls",
+        toolCalls: fnCalls.map((p, i) => ({
+          id: `gemini-tc-${Date.now()}-${i}`,
+          name: p.functionCall!.name,
+          args: p.functionCall!.args ?? {},
+        })),
+      };
+    }
+
+    return { type: "text", text: parts.find(p => p.text)?.text ?? "" };
+  }
 }
 
-// ── Groq tool-calling adapter (OpenAI-compatible) ─────────────────────────
+// ── Groq adapter (OpenAI-compatible) ──────────────────────────────────────
 
-function toGroqTool(tool: ToolDefinition): object {
+function toOpenAITool(tool: ToolDefinition): object {
   const properties: Record<string, unknown> = {};
   const required: string[] = [];
   for (const p of tool.parameters) {
-    properties[p.name] = { type: p.type ?? 'string', description: p.description };
+    properties[p.name] = { type: p.type ?? "string", description: p.description };
     if (p.required !== false) required.push(p.name);
   }
   return {
-    type: 'function',
+    type: "function",
     function: {
       name: tool.name,
       description: tool.description,
-      parameters: { type: 'object', properties, required },
+      parameters: { type: "object", properties, required },
     },
   };
 }
 
-async function callGroqWithTools(
-  messages: LLMMessage[],
-  tools: ToolDefinition[],
-  toolResults?: ToolResult[],
-): Promise<LLMResponse> {
-  if (!groqKey) throw new LLMAuthError('Groq');
+class GroqAdapter implements LLMAdapter {
+  async chat(messages: LLMMessage[], _jsonSchema?: object, jsonSchemaDescription?: string): Promise<string> {
+    if (!groqKey) throw new LLMAuthError("Groq");
 
-  const finalMessages: object[] = [...messages];
-  if (toolResults && toolResults.length > 0) {
-    for (const r of toolResults) {
-      finalMessages.push({ role: 'tool', tool_call_id: r.toolCallId, content: r.output });
-    }
-  }
+    const finalMessages = jsonSchemaDescription
+      ? messages.map(m =>
+          m.role === "system"
+            ? { ...m, content: `${m.content}\n\nYou MUST respond with valid JSON matching this schema:\n${jsonSchemaDescription}` }
+            : m,
+        )
+      : messages;
 
-  const body = {
-    model: groqModel,
-    messages: finalMessages,
-    tools: tools.map(toGroqTool),
-    tool_choice: 'auto',
-    temperature: 0.2,
-  };
-
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${groqKey}` },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    if (response.status === 429) throw new LLMQuotaError('Groq');
-    if (response.status === 401 || response.status === 403) throw new LLMAuthError('Groq');
-    throw new Error(`Groq ${response.status}: ${err}`);
-  }
-
-  const data = await response.json();
-  const choice = data.choices?.[0];
-  const msg = choice?.message;
-
-  if (msg?.tool_calls && msg.tool_calls.length > 0) {
-    return {
-      type: 'tool_calls',
-      toolCalls: msg.tool_calls.map((tc: { id: string; function: { name: string; arguments: string } }) => ({
-        id: tc.id,
-        name: tc.function.name,
-        args: JSON.parse(tc.function.arguments ?? '{}'),
-      })),
+    const body: Record<string, unknown> = {
+      model: groqModel,
+      messages: finalMessages,
+      temperature: 0.2,
     };
+
+    if (jsonSchemaDescription) {
+      body.response_format = { type: "json_object" };
+    }
+
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${groqKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      throwOnApiError(response.status, await response.text(), "Groq", groqModel);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content ?? "";
   }
 
-  return { type: 'text', text: msg?.content ?? '' };
+  async chatWithTools(
+    messages: LLMMessage[],
+    tools: ToolDefinition[],
+    toolResults?: ToolResult[],
+  ): Promise<LLMResponse> {
+    if (!groqKey) throw new LLMAuthError("Groq");
+
+    const finalMessages: object[] = [...messages];
+    if (toolResults && toolResults.length > 0) {
+      for (const r of toolResults) {
+        finalMessages.push({ role: "tool", tool_call_id: r.toolCallId, content: r.output });
+      }
+    }
+
+    const body = {
+      model: groqModel,
+      messages: finalMessages,
+      tools: tools.map(toOpenAITool),
+      tool_choice: "auto",
+      temperature: 0.2,
+    };
+
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${groqKey}` },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      throwOnApiError(response.status, await response.text(), "Groq", groqModel);
+    }
+
+    const data = await response.json();
+    const choice = data.choices?.[0];
+    const msg = choice?.message;
+
+    if (msg?.tool_calls && msg.tool_calls.length > 0) {
+      return {
+        type: "tool_calls",
+        toolCalls: msg.tool_calls.map((tc: { id: string; function: { name: string; arguments: string } }) => ({
+          id: tc.id,
+          name: tc.function.name,
+          args: JSON.parse(tc.function.arguments ?? "{}"),
+        })),
+      };
+    }
+
+    return { type: "text", text: msg?.content ?? "" };
+  }
 }
+
+// ── Claude adapter (Anthropic Messages API) ────────────────────────────────
+
+function toClaudeTool(tool: ToolDefinition): object {
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  for (const p of tool.parameters) {
+    properties[p.name] = { type: p.type ?? "string", description: p.description };
+    if (p.required !== false) required.push(p.name);
+  }
+  return {
+    name: tool.name,
+    description: tool.description,
+    input_schema: { type: "object", properties, required },
+  };
+}
+
+class ClaudeAdapter implements LLMAdapter {
+  private readonly baseUrl = "https://api.anthropic.com/v1/messages";
+  private readonly apiVersion = "2023-06-01";
+
+  async chat(
+    messages: LLMMessage[],
+    _jsonSchema?: object,
+    jsonSchemaDescription?: string,
+  ): Promise<string> {
+    if (!claudeKey) throw new LLMAuthError("Claude");
+
+    const systemMsg = messages.find(m => m.role === "system");
+    const turns = messages.filter(m => m.role !== "system");
+
+    let system = systemMsg?.content ?? "";
+    if (jsonSchemaDescription) {
+      system += `\n\nYou MUST respond with valid JSON matching this schema:\n${jsonSchemaDescription}`;
+    }
+
+    const body: Record<string, unknown> = {
+      model: claudeModel,
+      max_tokens: 4096,
+      messages: turns.map(m => ({ role: m.role, content: m.content })),
+    };
+
+    if (system) body.system = system;
+
+    const response = await fetch(this.baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": claudeKey,
+        "anthropic-version": this.apiVersion,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      throwOnApiError(response.status, await response.text(), "Claude", claudeModel);
+    }
+
+    const data = await response.json();
+    const textBlock = (data.content ?? []).find((b: { type: string }) => b.type === "text");
+    return (textBlock as { text?: string } | undefined)?.text ?? "";
+  }
+
+  async chatWithTools(
+    messages: LLMMessage[],
+    tools: ToolDefinition[],
+    toolResults?: ToolResult[],
+  ): Promise<LLMResponse> {
+    if (!claudeKey) throw new LLMAuthError("Claude");
+
+    const systemMsg = messages.find(m => m.role === "system");
+    const turns = messages.filter(m => m.role !== "system");
+
+    type ClaudeMessage = { role: string; content: unknown };
+    const claudeMessages: ClaudeMessage[] = turns.map(m => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    if (toolResults && toolResults.length > 0) {
+      claudeMessages.push({
+        role: "user",
+        content: toolResults.map(r => ({
+          type: "tool_result",
+          tool_use_id: r.toolCallId,
+          content: r.output,
+        })),
+      });
+    }
+
+    const body: Record<string, unknown> = {
+      model: claudeModel,
+      max_tokens: 4096,
+      messages: claudeMessages,
+      tools: tools.map(toClaudeTool),
+    };
+
+    if (systemMsg?.content) body.system = systemMsg.content;
+
+    const response = await fetch(this.baseUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": claudeKey,
+        "anthropic-version": this.apiVersion,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      throwOnApiError(response.status, await response.text(), "Claude", claudeModel);
+    }
+
+    const data = await response.json();
+    const content: { type: string; id?: string; name?: string; input?: Record<string, unknown>; text?: string }[] =
+      data.content ?? [];
+
+    const toolUseBlocks = content.filter(b => b.type === "tool_use");
+    if (toolUseBlocks.length > 0) {
+      return {
+        type: "tool_calls",
+        toolCalls: toolUseBlocks.map(b => ({
+          id: b.id!,
+          name: b.name!,
+          args: b.input ?? {},
+        })),
+      };
+    }
+
+    const textBlock = content.find(b => b.type === "text");
+    return { type: "text", text: textBlock?.text ?? "" };
+  }
+}
+
+// ── Register all adapters ──────────────────────────────────────────────────
+
+LLMAdapterFactory.register("gemini", new GeminiAdapter());
+LLMAdapterFactory.register("groq", new GroqAdapter());
+LLMAdapterFactory.register("claude", new ClaudeAdapter());
