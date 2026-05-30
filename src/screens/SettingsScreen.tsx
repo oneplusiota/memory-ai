@@ -5,17 +5,24 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { useAuth } from '@/hooks/useAuth';
 import { useVault } from '@/hooks/useVault';
-import { clearIndex, loadIndex, saveIndex } from '@/services/indexer/IndexStore';
+import { clearNotes, getAllNotes, getNoteCount, upsertNote, upsertLinks, updateSemanticSummary, setEmbedding } from '@/services/db/VaultDB';
+import {
+  isModelDownloaded as gloveModelDownloaded,
+  downloadModel as gloveDownloadModel,
+  loadVocab as gloveLoadVocab,
+  isReady as gloveReady,
+  embed as gloveEmbed,
+  deleteModel as gloveDeleteModel,
+} from '@/services/search/GloveService';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
 import { scanVaultForMarkdown } from '@/services/vault/VaultScanner';
 import { parseNote } from '@/services/vault/MarkdownParser';
-import { indexNote, tokenize } from '@/services/indexer/TFIDFIndexer';
-import { indexLinks } from '@/services/indexer/GraphIndexer';
+import { extractDensestParagraph } from '@/utils/textUtils';
 import { noteTitle } from '@/utils/pathUtils';
 import {
   saveGeminiKey, saveGroqKey, saveClaudeKey, saveActiveProvider,
   saveGeminiModelPref, saveGroqModelPref, saveClaudeModelPref, loadStoredKeys,
-} from '@/services/gemini/GeminiClient';
+} from '@/services/llm/ProviderConfig';
 import {
   saveWebSearchProvider, saveTavilyKey, saveSerperKey,
   loadStoredWebSearchKeys,
@@ -56,16 +63,9 @@ const GROQ_MODELS = [
 
 const CLAUDE_MODELS = [
   // ── Claude 4.x ──
-  { value: 'claude-haiku-3-5', label: 'Claude Haiku 3.5', desc: 'Cheapest · fastest response' },
-  { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5', desc: 'Balanced · recommended' },
-  { value: 'claude-opus-4-5', label: 'Claude Opus 4.5 ★', desc: 'Most capable 4.5 · highest cost' },
-  // ── Claude 4 stable ──
-  { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4 ★', desc: 'Latest stable Sonnet 4' },
-  { value: 'claude-opus-4-20250514', label: 'Claude Opus 4 ★', desc: 'Latest stable Opus 4 · top quality' },
-  // ── Claude 3.x (lower cost) ──
-  { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet', desc: 'Previous gen · widely available' },
-  { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku', desc: 'Previous gen · very fast & cheap' },
-  { value: 'claude-3-7-sonnet-20250219', label: 'Claude 3.7 Sonnet ★', desc: 'Extended thinking support' },
+  { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', desc: 'Cheapest · fastest response' },
+  { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', desc: 'Balanced · recommended' },
+  { value: 'claude-opus-4-8', label: 'Claude Opus 4.8 ★', desc: 'Most capable · highest cost' },
 ];
 
 const STT_OPTIONS: { value: STTMode; label: string; desc: string }[] = [
@@ -225,8 +225,19 @@ export function SettingsScreen() {
   const { authState, userEmail, signIn, signOut } = useAuth();
   const { vaultUri, pickVault, clearVault } = useVault();
   const [indexing, setIndexing] = useState(false);
+  const [enriching, setEnriching] = useState(false);
+  const [enrichProgress, setEnrichProgress] = useState('');
   const [noteCount, setNoteCount] = useState(0);
   const [snack, setSnack] = useState('');
+
+  // GloVe semantic search state
+  const [gloveDownloaded, setGloveDownloaded] = useState(false);
+  const [gloveLoaded, setGloveLoaded] = useState(false);
+  const [gloveDownloading, setGloveDownloading] = useState(false);
+  const [gloveDownloadProgress, setGloveDownloadProgress] = useState(0);
+  const [gloveEmbedding, setGloveEmbedding] = useState(false);
+  const [gloveEmbedProgress, setGloveEmbedProgress] = useState('');
+  const [embeddedCount, setEmbeddedCount] = useState(0);
 
   // LLM state
   const [activeProvider, setActiveProviderState] = useState<LLMProvider>('gemini');
@@ -270,6 +281,21 @@ export function SettingsScreen() {
       if (am) setAgentModeState(am as AgentMode);
       const sm = await SecureStore.getItemAsync(STT_MODE_KEY);
       if (sm) setSttModeState(sm as STTMode);
+
+      // Load note count from SQLite
+      const count = await getNoteCount();
+      setNoteCount(count);
+
+      // Count notes with embeddings
+      const allNotes = await getAllNotes();
+      setEmbeddedCount(allNotes.filter(n => n.embedding && n.embedding.length > 0).length);
+
+      // Check GloVe model state
+      const downloaded = await gloveModelDownloaded();
+      setGloveDownloaded(downloaded);
+      if (downloaded) {
+        gloveLoadVocab().then(() => setGloveLoaded(gloveReady()));
+      }
     })();
   }, []);
 
@@ -371,30 +397,141 @@ export function SettingsScreen() {
 
   const rebuildIndex = useCallback(async (uri: string) => {
     setIndexing(true);
-    await clearIndex();
-    const index = await loadIndex();
+    await clearNotes();
     try {
       const files = await scanVaultForMarkdown(uri);
       setNoteCount(files.length);
+      const modelReady = gloveReady();
       for (const file of files) {
         const content = await StorageAccessFramework.readAsStringAsync(file.uri);
         const parsed = parseNote(content, noteTitle(file.relativePath));
-        index.notes[file.relativePath] = {
-          id: file.relativePath, title: parsed.title, tags: parsed.tags,
-          aliases: parsed.aliases, summary: parsed.summary,
-          outlinks: parsed.outlinks, type: parsed.type, area: parsed.area,
-          status: parsed.status, lastModified: Date.now(),
-        };
-        indexNote(index, file.relativePath, tokenize(parsed.body));
-        indexLinks(index, file.relativePath, parsed.outlinks);
+        await upsertNote({
+          id: file.relativePath,
+          title: parsed.title,
+          tags: parsed.tags,
+          aliases: parsed.aliases,
+          summary: extractDensestParagraph(parsed.body),
+          outlinks: parsed.outlinks,
+          type: parsed.type,
+          area: parsed.area,
+          status: parsed.status,
+          lastModified: Date.now(),
+        });
+        await upsertLinks(file.relativePath, parsed.outlinks);
+        if (modelReady) {
+          const vec = gloveEmbed(parsed.body);
+          if (vec) await setEmbedding(file.relativePath, Array.from(vec));
+        }
       }
-      index.builtAt = Date.now();
-      await saveIndex(index);
-      setSnack(`Indexed ${files.length} notes.`);
+      const embCount = modelReady ? files.length : 0;
+      setEmbeddedCount(embCount);
+      setSnack(`Indexed ${files.length} notes${modelReady ? ' with embeddings' : ''}.`);
     } catch (e: any) {
       setSnack(`Indexing failed: ${e.message}`);
     } finally {
       setIndexing(false);
+    }
+  }, []);
+
+  const handleDownloadGlove = useCallback(async () => {
+    setGloveDownloading(true);
+    setGloveDownloadProgress(0);
+    setOpenModal(null);
+    try {
+      await gloveDownloadModel((p) => setGloveDownloadProgress(Math.round(p * 100)));
+      setGloveDownloaded(true);
+      setSnack('Model downloaded. Loading vocab…');
+      await gloveLoadVocab();
+      setGloveLoaded(gloveReady());
+      setSnack('Semantic search ready! Re-index your vault to generate embeddings.');
+    } catch (e: any) {
+      setSnack(`Download failed: ${e.message}`);
+    } finally {
+      setGloveDownloading(false);
+    }
+  }, []);
+
+  const handleEmbedAllNotes = useCallback(async (uri: string) => {
+    if (!gloveReady()) { setSnack('Model not loaded yet.'); return; }
+    setGloveEmbedding(true);
+    setOpenModal(null);
+    try {
+      const allNotes = await getAllNotes();
+      const toEmbed = allNotes.filter(n => !n.embedding);
+      if (toEmbed.length === 0) { setSnack('All notes already have embeddings.'); return; }
+      const files = await scanVaultForMarkdown(uri);
+      const fileMap = new Map(files.map(f => [f.relativePath, f.uri]));
+      let done = 0;
+      for (const note of toEmbed) {
+        try {
+          const fileUri = fileMap.get(note.id);
+          if (!fileUri) continue;
+          const content = await StorageAccessFramework.readAsStringAsync(fileUri);
+          const parsed = parseNote(content, noteTitle(note.id));
+          const vec = gloveEmbed(parsed.body);
+          if (vec) await setEmbedding(note.id, Array.from(vec));
+        } catch { /* skip */ }
+        done++;
+        setGloveEmbedProgress(`${done} / ${toEmbed.length}`);
+      }
+      setEmbeddedCount(done);
+      setSnack(`Embeddings generated for ${done} notes.`);
+    } catch (e: any) {
+      setSnack(`Embedding failed: ${e.message}`);
+    } finally {
+      setGloveEmbedding(false);
+      setGloveEmbedProgress('');
+    }
+  }, []);
+
+  const enrichWithAI = useCallback(async (uri: string) => {
+    setEnriching(true);
+    setOpenModal(null);
+    try {
+      const allNotes = await getAllNotes();
+      // Only enrich notes that don't already have a semantic summary and aren't daily/conversation
+      const toEnrich = allNotes.filter(n =>
+        !n.semanticSummary && !['daily', 'conversation'].includes(n.type ?? ''),
+      );
+
+      if (toEnrich.length === 0) {
+        setSnack('All notes already have AI summaries.');
+        return;
+      }
+
+      const files = await scanVaultForMarkdown(uri);
+      const fileMap = new Map(files.map(f => [f.relativePath, f.uri]));
+
+      const BATCH = 5;
+      let done = 0;
+      for (let i = 0; i < toEnrich.length; i += BATCH) {
+        const batch = toEnrich.slice(i, i + BATCH);
+        await Promise.all(batch.map(async (note) => {
+          try {
+            const fileUri = fileMap.get(note.id);
+            if (!fileUri) return;
+            const content = await StorageAccessFramework.readAsStringAsync(fileUri);
+            const parsed = parseNote(content, noteTitle(note.id));
+            const { generateSemanticSummary } = await import('@/services/llm/SemanticSummarizer');
+            const summary = await generateSemanticSummary(content, parsed.title);
+            await updateSemanticSummary(note.id, summary);
+          } catch {
+            // Skip notes that fail — continue with the rest
+          }
+        }));
+        done += batch.length;
+        setEnrichProgress(`${done} / ${toEnrich.length}`);
+        // Small pause between batches to avoid rate-limit bursts
+        if (i + BATCH < toEnrich.length) {
+          await new Promise(r => setTimeout(r, 500));
+        }
+      }
+      setSnack(`AI summaries added to ${done} notes.`);
+    } catch (e: any) {
+      setSnack(`Enrichment failed: ${e.message}`);
+    } finally {
+      setEnriching(false);
+      setEnrichProgress('');
     }
   }, []);
 
@@ -539,6 +676,18 @@ export function SettingsScreen() {
             icon="folder-outline"
             label="Vault"
             value={vaultUri ? (noteCount > 0 ? `${noteCount} notes indexed` : 'Connected') : 'Not connected'}
+            onPress={() => setOpenModal('vault')}
+          />
+          <View style={styles.cardDivider} />
+          <SettingRow
+            icon="brain"
+            label="Semantic Search"
+            value={
+              !gloveDownloaded ? 'Model not downloaded' :
+              !gloveLoaded ? 'Model downloaded, not loaded' :
+              embeddedCount === 0 ? 'Loaded — no embeddings yet (rebuild index)' :
+              `Loaded · ${embeddedCount}/${noteCount} notes embedded`
+            }
             onPress={() => setOpenModal('vault')}
           />
         </View>
@@ -706,6 +855,72 @@ export function SettingsScreen() {
 
               <View style={styles.vaultActionDivider} />
 
+              {/* Enrich with AI summaries */}
+              <TouchableOpacity
+                style={styles.vaultActionRow}
+                activeOpacity={enriching ? 1 : 0.7}
+                onPress={() => {
+                  if (!enriching) enrichWithAI(vaultUri);
+                }}
+              >
+                <View style={styles.vaultActionIcon}>
+                  <MaterialCommunityIcons name="brain" size={20} color="#6D28D9" />
+                </View>
+                <View style={styles.vaultActionText}>
+                  <Text style={styles.vaultActionLabel}>Enrich with AI Summaries</Text>
+                  <Text style={styles.vaultActionDesc}>
+                    {enriching
+                      ? `Generating… ${enrichProgress}`
+                      : 'Add semantic descriptions to existing notes (used for search)'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <View style={styles.vaultActionDivider} />
+
+              {/* Semantic search (GloVe) */}
+              {!gloveDownloaded ? (
+                <TouchableOpacity
+                  style={styles.vaultActionRow}
+                  activeOpacity={gloveDownloading ? 1 : 0.7}
+                  onPress={() => { if (!gloveDownloading) handleDownloadGlove(); }}
+                >
+                  <View style={styles.vaultActionIcon}>
+                    <MaterialCommunityIcons name="vector-combine" size={20} color="#6D28D9" />
+                  </View>
+                  <View style={styles.vaultActionText}>
+                    <Text style={styles.vaultActionLabel}>Download Semantic Search</Text>
+                    <Text style={styles.vaultActionDesc}>
+                      {gloveDownloading
+                        ? `Downloading… ${gloveDownloadProgress}%`
+                        : 'One-time ~7MB download for offline word embeddings'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.vaultActionRow}
+                  activeOpacity={gloveEmbedding ? 1 : 0.7}
+                  onPress={() => { if (!gloveEmbedding && vaultUri) handleEmbedAllNotes(vaultUri); }}
+                >
+                  <View style={styles.vaultActionIcon}>
+                    <MaterialCommunityIcons name="vector-combine" size={20} color="#6D28D9" />
+                  </View>
+                  <View style={styles.vaultActionText}>
+                    <Text style={styles.vaultActionLabel}>Semantic Search</Text>
+                    <Text style={styles.vaultActionDesc}>
+                      {gloveEmbedding
+                        ? `Generating embeddings… ${gloveEmbedProgress}`
+                        : gloveLoaded
+                          ? 'Active — tap to regenerate embeddings for all notes'
+                          : 'Loading model into memory…'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+
+              <View style={styles.vaultActionDivider} />
+
               {/* Connect new */}
               <TouchableOpacity
                 style={styles.vaultActionRow}
@@ -733,7 +948,7 @@ export function SettingsScreen() {
                 onPress={async () => {
                   setOpenModal(null);
                   await clearVault();
-                  await clearIndex();
+                  await clearNotes();
                   setNoteCount(0);
                   setSnack('Vault disconnected.');
                 }}

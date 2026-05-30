@@ -3,10 +3,9 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 import { Button, Card, Chip, Snackbar, Text } from 'react-native-paper';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { appendToDailyNote, appendToNote, createNote, updateConversationMeta } from '@/services/vault/VaultWriter';
-import { getIndex, saveIndex } from '@/services/indexer/IndexStore';
-import { indexNote, tokenize } from '@/services/indexer/TFIDFIndexer';
-import { indexLinks } from '@/services/indexer/GraphIndexer';
+import { upsertNote, upsertLinks } from '@/services/db/VaultDB';
 import { parseNote } from '@/services/vault/MarkdownParser';
+import { extractDensestParagraph } from '@/utils/textUtils';
 import { noteTitle } from '@/utils/pathUtils';
 import type { RootStackParamList } from '@/navigation/AppNavigator';
 
@@ -25,18 +24,15 @@ export function ConfirmUpdateScreen() {
     const atomsTouched: string[] = [];
     let success = false;
     try {
-      const index = getIndex();
-
       // Write daily entry
       const dailyPath = await appendToDailyNote(vaultUri, decision.daily_entry);
       const dailyParsed = parseNote(decision.daily_entry, noteTitle(dailyPath));
-      index.notes[dailyPath] = {
+      await upsertNote({
         id: dailyPath, title: dailyParsed.title, tags: dailyParsed.tags,
-        aliases: dailyParsed.aliases, summary: dailyParsed.summary,
+        aliases: dailyParsed.aliases, summary: extractDensestParagraph(dailyParsed.body),
         outlinks: dailyParsed.outlinks, type: 'daily', lastModified: Date.now(),
-      };
-      indexNote(index, dailyPath, tokenize(dailyParsed.body));
-      indexLinks(index, dailyPath, dailyParsed.outlinks);
+      });
+      await upsertLinks(dailyPath, dailyParsed.outlinks);
 
       // Write each atom note
       for (const op of decision.notes) {
@@ -48,17 +44,14 @@ export function ConfirmUpdateScreen() {
         }
         atomsTouched.push(op.path);
         const parsed = parseNote(op.content, noteTitle(op.path));
-        index.notes[op.path] = {
+        await upsertNote({
           id: op.path, title: parsed.title, tags: parsed.tags,
-          aliases: parsed.aliases, summary: parsed.summary, outlinks: parsed.outlinks,
-          type: parsed.type, area: parsed.area, status: parsed.status,
-          lastModified: Date.now(),
-        };
-        indexNote(index, op.path, tokenize(parsed.body));
-        indexLinks(index, op.path, parsed.outlinks);
+          aliases: parsed.aliases, summary: extractDensestParagraph(parsed.body),
+          outlinks: parsed.outlinks, type: parsed.type, area: parsed.area,
+          status: parsed.status, lastModified: Date.now(),
+        });
+        await upsertLinks(op.path, parsed.outlinks);
       }
-
-      await saveIndex(index);
 
       if (conversationFilePath && vaultUri) {
         await updateConversationMeta(vaultUri, conversationFilePath, true, atomsTouched).catch(() => {});
