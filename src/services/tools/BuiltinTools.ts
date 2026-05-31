@@ -8,7 +8,7 @@ import { searchNotes } from '@/services/search/HybridSearch';
 import { getAllNotes, upsertNote, upsertLinks, setEmbedding } from '@/services/db/VaultDB';
 import { embed as gloveEmbed, isReady as gloveReady } from '@/services/search/GloveService';
 import { parseNote } from '@/services/vault/MarkdownParser';
-import { readNote, createNote, appendToNote } from '@/services/vault/VaultWriter';
+import { readNote, createNote, appendToNote, appendToDailyNote } from '@/services/vault/VaultWriter';
 import { extractDensestParagraph } from '@/utils/textUtils';
 import { getTodayDateString, getTimeHeading } from '@/utils/dateUtils';
 import { noteTitle } from '@/utils/pathUtils';
@@ -62,6 +62,19 @@ export const BUILTIN_TOOL_DEFINITIONS: ToolDefinition[] = [
     kind: 'builtin',
   },
   {
+    name: 'append_daily_note',
+    description: "Append a rich log entry to today's daily note (creates the note if it doesn't exist). ALWAYS call this after every vault save — single note or full conversation. The entry must be a meaningful ### HH:MM block, not a one-liner.",
+    parameters: [
+      {
+        name: 'entry',
+        description: 'Markdown log entry. Must use this format:\n### HH:MM — [Descriptive title]\n**What happened:** [1-3 sentence summary]\n**Key insight / next step:** [takeaway, omit if none]\n[[Atom1]], [[Atom2]]',
+        type: 'string',
+        required: true,
+      },
+    ],
+    kind: 'builtin',
+  },
+  {
     name: 'get_date_time',
     description: 'Get the current date and time.',
     parameters: [],
@@ -92,6 +105,13 @@ export async function executeBuiltinTool(
 
     case 'update_note':
       return executeUpdateNote(toolCallId, args);
+
+    case 'append_daily_note': {
+      const entry = String(args.entry ?? '');
+      if (!entry) return { toolCallId, name, output: 'Error: entry is required.' };
+      const dailyPath = await appendToDailyNote(vaultUri, entry);
+      return { toolCallId, name, output: `Appended to daily note at ${dailyPath}.` };
+    }
 
     case 'get_date_time':
       return {

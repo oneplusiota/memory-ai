@@ -23,7 +23,8 @@ export async function refreshLifeContext(
     .join('\n');
   if (!userText.trim()) return null;
 
-  const current = (await readLifeContext(vaultUri)) ?? LIFE_CONTEXT_INITIAL_TEMPLATE(today);
+  const existingContext = await readLifeContext(vaultUri);
+  const current = existingContext ?? LIFE_CONTEXT_INITIAL_TEMPLATE(today);
   const prompt = buildLifeContextUpdatePrompt(userText, current, today);
 
   const llmMessages: LLMMessage[] = [
@@ -34,7 +35,9 @@ export async function refreshLifeContext(
   const text = await llmChat(llmMessages, LIFE_CONTEXT_RESPONSE_SCHEMA, LIFE_CONTEXT_SCHEMA_DESCRIPTION);
   const result = JSON.parse(text) as { updated_context: string; changed: boolean };
 
-  if (result.changed && result.updated_context) {
+  // Always write on first run (no existing file) so the file gets created even
+  // if the LLM returns changed: false for a non-personal conversation.
+  if (result.updated_context && (result.changed || existingContext === null)) {
     await writeLifeContext(vaultUri, result.updated_context);
     return result.updated_context;
   }
