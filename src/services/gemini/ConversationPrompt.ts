@@ -16,13 +16,32 @@ const TOOL_USE_POLICY = `## Tool Use Policy
 ### Answering questions about the user's life
 When the user asks about anything personal — their activities, habits, health, goals, people, projects, daily logs, or anything they may have previously noted — ALWAYS call search_vault first before answering. Use a concise keyword query (e.g. "cigarettes smoking today", "workout", "sleep"). Do NOT say "I don't have that information" without first searching. Only after search_vault returns empty results may you say you couldn't find a record.
 
-### Saving to vault
-When the user asks you to save, remember, update, or write anything to their vault:
-1. ALWAYS call search_vault first to check for an existing note on the same topic.
-2. If a closely matching note is found, use update_note to append to it — do NOT create a duplicate.
-3. Only call create_note if no closely matching note exists.
+### Saving to vault — single note or fact
+When the user says "save this", "remember this", "note that down", "keep track of this", or asks to save a SPECIFIC thing:
+1. Call search_vault to check for an existing note on the same topic.
+2. Call update_note if a close match is found; call create_note only if nothing matches.
+3. In the note content, cross-link with [[wikilinks]] to related atoms from the atom index and any other notes touched in this save.
+4. Call append_daily_note with a rich log entry in this exact format:
+   ### HH:MM — [Descriptive title of what was saved]
+   **What happened:** [1–3 sentences summarising what was discussed and saved]
+   **Key insight / next step:** [concrete takeaway — omit the line if none]
+   [[Atom1]], [[Atom2]]  ← wikilink every atom note you created or updated
 
-Never skip the search step. Duplicate notes are worse than updating an imperfect existing note.
+### Saving to vault — full conversation ("save everything", "save to vault", "save this conversation")
+When the user asks to save the ENTIRE conversation or "everything we talked about":
+1. Scan the conversation from the VERY FIRST message — not just the recent exchange.
+2. Identify ALL distinct topics: people, projects, health journeys, habits, decisions, goals, plans — each warrants its own atom note.
+3. For each topic: call search_vault → then create_note or update_note.
+4. In EVERY note's content, include [[wikilinks]] to: (a) related existing atoms from the atom index, (b) the other atom notes created or updated in this same save batch.
+5. After ALL atom notes are written, call append_daily_note ONCE with a comprehensive log entry:
+   ### HH:MM — [Title summarising all topics covered]
+   **What happened:** [Paragraph summarising the full conversation and every topic saved]
+   **Key insight / next step:** [Most important takeaway from the whole conversation — omit if none]
+   [[Atom1]], [[Atom2]], [[Atom3]]  ← wikilink every atom note created or updated
+
+### Vault paths
+- Atom notes must be saved to atoms/Note-Title.md (Title-Case-Hyphenated filenames)
+- NEVER write to .conversations/ — that folder is reserved for system use only
 
 CRITICAL: Never state in your text reply that you have saved, written, remembered, or updated a note. Vault writes happen exclusively through tool calls — your text response cannot write anything. Only acknowledge a save after a tool result confirms it (e.g. "Done — saved as [[Note Name]]").`;
 
@@ -154,11 +173,27 @@ After producing the code block, tell the user: "Shall I save this to your vault 
 - After saving, it will appear in the Tools screen and be available to the AI automatically`,
 };
 
-export function buildSystemPrompt(mode: ConversationMode = 'journal', toolsAvailable: boolean = true): string {
+export function buildAtomIndexBlock(allAtoms: NoteNode[]): string {
+  const topAtoms = [...allAtoms]
+    .sort((a, b) => b.lastModified - a.lastModified)
+    .slice(0, 20);
+  if (topAtoms.length === 0) return '';
+  const lines = topAtoms.map((n) => {
+    const meta = [n.type, n.area, n.status].filter(Boolean).join(', ');
+    return `- [[${n.title}]]${meta ? ` (${meta})` : ''}: ${n.summary.slice(0, 80).replace(/\n/g, ' ')}`;
+  }).join('\n');
+  return `\n\nATOM INDEX (your vault — top 20 by last modified; call search_vault or read_note for full content):\n${lines}`;
+}
+
+export function buildSystemPrompt(mode: ConversationMode = 'journal', toolsAvailable: boolean = true, lifeContext?: string, atomIndex?: string): string {
   const toolBlock = toolsAvailable
     ? TOOL_USE_POLICY
     : `${SUGGEST_SAVE_BLOCK}\n\n${NO_VAULT_TOOLS}`;
-  return `${PERSONA}\n\n${MODE_OVERRIDES[mode]}\n\n${SYSTEM_BASE_COMMON}\n\n${toolBlock}`;
+  const lifeContextBlock = lifeContext
+    ? `\n\nLIFE CONTEXT (maintained personal profile — use this to personalise all responses):\n${lifeContext}`
+    : '';
+  const atomIndexBlock = atomIndex ?? '';
+  return `${PERSONA}\n\n${MODE_OVERRIDES[mode]}\n\n${SYSTEM_BASE_COMMON}${lifeContextBlock}${atomIndexBlock}\n\n${toolBlock}`;
 }
 
 export function buildChatPrompt(

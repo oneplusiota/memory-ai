@@ -80,7 +80,7 @@ export async function saveConversationFile(
     .slice(0, 5)
     .join('-');
   const slug = wordSlug ? `${date}-${wordSlug}` : `${date}-${time.replace(':', '')}`;
-  const relativePath = `conversations/${slug}.md`;
+  const relativePath = `.conversations/${slug}.md`;
 
   const body = messages
     .map((m) => `**${m.role === 'user' ? 'You' : 'AI'}**: ${m.text}`)
@@ -119,7 +119,7 @@ export async function listConversationFiles(vaultUri: string): Promise<Array<{
   extracted: boolean;
   preview: string;
 }>> {
-  const dirEntries = await listDirectory(vaultUri, 'conversations');
+  const dirEntries = await listDirectory(vaultUri, '.conversations');
   const results = [];
   for (const { uri, name } of dirEntries) {
     if (!name.endsWith('.md')) continue;
@@ -128,7 +128,7 @@ export async function listConversationFiles(vaultUri: string): Promise<Array<{
       const fm = parseConversationFrontmatter(content);
       // Fall back to body extraction for files saved before the preview field was added
       const preview = fm.preview || extractFirstUserMessage(content);
-      results.push({ relativePath: `conversations/${name}`, ...fm, preview });
+      results.push({ relativePath: `.conversations/${name}`, ...fm, preview });
     } catch {
       // skip unreadable files
     }

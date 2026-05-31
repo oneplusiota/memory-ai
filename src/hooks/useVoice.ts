@@ -21,6 +21,8 @@ export function useVoice(
   const userStoppedRef = useRef(true);
   // Track any pending auto-restart timer so we can cancel it on manual stop
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Count consecutive silent restarts — if too many, declare STT unavailable
+  const restartCountRef = useRef(0);
 
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
@@ -35,6 +37,8 @@ export function useVoice(
     if (sttMode !== 'native' && sttMode !== 'native-corrected') return;
     // Drop in-flight results that arrive after the user has stopped
     if (userStoppedRef.current) return;
+    // A successful result means STT is healthy — reset the restart counter
+    restartCountRef.current = 0;
     const segment = event.results[0]?.transcript ?? '';
     if (event.isFinal) {
       onFinalAppend(segment);
@@ -50,6 +54,14 @@ export function useVoice(
       setState('done');
     } else {
       // Android stopped due to silence timeout — restart silently to keep mic open
+      restartCountRef.current += 1;
+      if (restartCountRef.current > 4) {
+        // Too many silent restarts — STT is silently failing, surface an error
+        setError('Speech recognition unavailable — tap the mic to try again');
+        setState('error');
+        userStoppedRef.current = true;
+        return;
+      }
       restartTimerRef.current = setTimeout(() => {
         restartTimerRef.current = null;
         // Guard: if the user stopped while the timer was pending, abort
@@ -122,6 +134,7 @@ export function useVoice(
       setState('error');
       return;
     }
+    restartCountRef.current = 0;
     ExpoSpeechRecognitionModule.start({
       lang: 'en-US',
       interimResults: true,
@@ -157,6 +170,9 @@ export function useVoice(
       return;
     }
 
+    // Optimistically transition state — the 'end' event may be delayed or never fire
+    // (e.g. when the recognizer crashes or the connection drops on Android)
+    setState('done');
     ExpoSpeechRecognitionModule.stop();
   }, [sttMode, recorder, onFinalAppend]);
 

@@ -5,7 +5,7 @@ import { searchNotes } from '@/services/search/HybridSearch';
 import { getAllNotes } from '@/services/db/VaultDB';
 import { embed as gloveEmbed, isReady as gloveReady } from '@/services/search/GloveService';
 import { chat, saveConversation } from '@/services/gemini/ConversationClient';
-import { buildSystemPrompt } from '@/services/gemini/ConversationPrompt';
+import { buildSystemPrompt, buildAtomIndexBlock } from '@/services/gemini/ConversationPrompt';
 import { saveConversationFile, readConversationMessages, overwriteConversationFile, readLifeContext } from '@/services/vault/VaultWriter';
 import { refreshLifeContext } from '@/services/llm/LifeContextClient';
 import { agentChat } from '@/services/tools/AgentClient';
@@ -187,10 +187,14 @@ export function useConversation(sttMode: STTMode = 'native', initialMode?: Conve
           ...customTools,
         ];
 
+        const allNotesForIndex = await getAllNotes();
+        const allAtomsForIndex = allNotesForIndex.filter(n => n.id.startsWith('atoms/'));
+        const atomIndex = buildAtomIndexBlock(allAtomsForIndex);
+
         replyText = await agentChat(
           withUser.slice(0, -1), // history without the new user msg (agentChat appends it)
           finalText,
-          buildSystemPrompt(conversationMode),
+          buildSystemPrompt(conversationMode, true, lifeContextRef.current ?? undefined, atomIndex || undefined),
           allTools,
           vaultUri,
           customTools,
@@ -224,9 +228,9 @@ export function useConversation(sttMode: STTMode = 'native', initialMode?: Conve
       messagesRef.current = withAI;
       autosave(withAI);
 
-      // Refresh life context in background every 5 user messages
+      // Refresh life context in background every 3 user messages
       const userMsgCount = withAI.filter(m => m.role === 'user').length;
-      if (vaultUri && userMsgCount % 5 === 0) {
+      if (vaultUri && userMsgCount % 3 === 0) {
         refreshLifeContext(vaultUri, withAI).then(updated => {
           if (updated) lifeContextRef.current = updated;
         }).catch(() => {});
