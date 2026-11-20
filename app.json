@@ -14,6 +14,10 @@
       },
       "permissions": [
         "android.permission.RECORD_AUDIO"
+      ],
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
       ]
     },
     "plugins": [
@@ -29,7 +33,27 @@
         }
       ],
       "expo-sqlite",
-      "expo-secure-store"
-    ]
+      "expo-secure-store",
+      [
+        "react-native-android-widget",
+        {
+          "widgets": [
+            {
+              "name": "QuickCapture",
+              "label": "Quick capture",
+              "description": "One tap to start dictating a note",
+              "minWidth": "180dp",
+              "minHeight": "58dp",
+              "targetCellWidth": 3,
+              "targetCellHeight": 1,
+              "resizeMode": "horizontal|vertical",
+              "widgetCategory": "home_screen|keyguard",
+              "updatePeriodMillis": 0
+            }
+          ]
+        }
+      ]
+    ],
+    "scheme": "memoryai"
   }
 }

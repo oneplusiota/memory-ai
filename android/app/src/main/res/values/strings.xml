@@ -1,3 +1,4 @@
 <resources>
   <string name="app_name">memory.ai</string>
+  <string name="widget_quickcapture_description" translatable="false">One tap to start dictating a note</string>
 </resources>

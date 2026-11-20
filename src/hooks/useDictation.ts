@@ -28,11 +28,11 @@ export function useDictation() {
     setText(next);
   }, []);
 
-  const voice = useVoice(onPartial, onFinal);
+  const { isRecording, error: voiceError, startListening, stopListening, reset } = useVoice(onPartial, onFinal);
 
   useEffect(() => {
-    if (voice.error) setError(voice.error);
-  }, [voice.error]);
+    if (voiceError) setError(voiceError);
+  }, [voiceError]);
 
   /** Keyboard edits replace the committed text so voice continues from what's on screen. */
   const onChangeText = useCallback((next: string) => {
@@ -40,27 +40,37 @@ export function useDictation() {
     setText(next);
   }, []);
 
-  const toggle = useCallback(async () => {
+  // Every callback below is referentially stable, so screens can safely use them in effect deps.
+  const start = useCallback(async () => {
     setError(null);
     try {
-      if (voice.isRecording) await voice.stopListening();
-      else await voice.startListening();
+      await startListening();
     } catch (e: any) {
       setError(e?.message ?? 'Microphone error. Check permissions in Android settings.');
     }
-  }, [voice]);
+  }, [startListening]);
+
+  const toggle = useCallback(async () => {
+    setError(null);
+    try {
+      if (isRecording) await stopListening();
+      else await startListening();
+    } catch (e: any) {
+      setError(e?.message ?? 'Microphone error. Check permissions in Android settings.');
+    }
+  }, [isRecording, startListening, stopListening]);
 
   /** Stops the mic, waits for the recognizer's last words, and returns the final text. */
   const finish = useCallback(async (): Promise<string> => {
-    await voice.stopListening();
+    await stopListening();
     return committedRef.current.trim();
-  }, [voice]);
+  }, [stopListening]);
 
   const clear = useCallback(() => {
     committedRef.current = '';
     setText('');
-    voice.reset();
-  }, [voice]);
+    reset();
+  }, [reset]);
 
-  return { text, onChangeText, isRecording: voice.isRecording, error, toggle, finish, clear };
+  return { text, onChangeText, isRecording, error, start, toggle, finish, clear };
 }

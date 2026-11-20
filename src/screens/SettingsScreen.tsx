@@ -3,6 +3,7 @@ import { Animated, Keyboard, Modal, ScrollView, StyleSheet, TouchableOpacity, Vi
 import { Button, Snackbar, Text, TextInput } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
+import { requestPinWidget } from 'react-native-android-widget';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
 import { countEntries } from '@/services/db/EntryDB';
 import { importVault } from '@/services/import/VaultImport';
@@ -312,6 +313,15 @@ export function SettingsScreen() {
   const claudeModelLabel = CLAUDE_MODELS.find(m => m.value === claudeModel)?.label ?? claudeModel;
   const providerLabel = LLM_PROVIDERS.find(p => p.value === activeProvider)?.label ?? activeProvider;
 
+  const handleAddWidget = useCallback(async () => {
+    try {
+      const ok = await requestPinWidget({ widgetName: 'QuickCapture' });
+      if (!ok) setSnack('Your launcher cannot add widgets from here. Long-press the home screen → Widgets → memory.ai.');
+    } catch {
+      setSnack('Long-press the home screen → Widgets → memory.ai → Quick capture.');
+    }
+  }, []);
+
   const handleImport = useCallback(async () => {
     if (importing) return;
     try {
@@ -412,6 +422,19 @@ export function SettingsScreen() {
               />
             </>
           )}
+        </View>
+
+        <Divider />
+
+        {/* ── WIDGET ── */}
+        <SectionHeader title="HOME SCREEN" />
+        <View style={styles.card}>
+          <SettingRow
+            icon="widgets-outline"
+            label="Add quick-capture widget"
+            value="One tap to start dictating"
+            onPress={handleAddWidget}
+          />
         </View>
 
         <Divider />

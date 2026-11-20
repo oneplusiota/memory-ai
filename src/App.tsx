@@ -1,10 +1,12 @@
 import React, { useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
+import type { LinkingOptions } from '@react-navigation/native';
 import { PaperProvider, MD3LightTheme } from 'react-native-paper';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { AppNavigator } from '@/navigation/AppNavigator';
+import type { RootStackParamList } from '@/navigation/AppNavigator';
 import { loadAllProviderConfig } from '@/services/llm/ProviderConfig';
 import { openEntryDB } from '@/services/db/EntryDB';
 
@@ -19,6 +21,12 @@ const theme = {
   },
 };
 
+// memoryai://capture (the home-screen widget) opens the capture screen directly
+const linking: LinkingOptions<RootStackParamList> = {
+  prefixes: ['memoryai://'],
+  config: { screens: { Capture: 'capture' } },
+};
+
 export default function App() {
   useEffect(() => {
     loadAllProviderConfig();
@@ -29,7 +37,7 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <PaperProvider theme={theme}>
-          <NavigationContainer>
+          <NavigationContainer linking={linking}>
             <StatusBar style="light" />
             <AppNavigator />
           </NavigationContainer>

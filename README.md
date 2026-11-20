@@ -35,6 +35,7 @@ Built for Android as a native APK using React Native + Expo bare workflow.
 ## Features
 
 - 🎙️ **One-tap capture** — tap the mic, talk, tap again: the entry is saved. Continuous Android speech recognition that restarts on silence and falls back to on-device recognition offline
+- 🧩 **Home-screen widget** — one tap opens a bare capture screen that is already listening; one more tap saves and closes, no navigation
 - 🔍 **Instant full-text search** — SQLite FTS5 over every entry: stemming, prefix matching and BM25 ranking, fully on-device
 - 💬 **Ask your entries** — chat with an assistant that searches your entries to answer (works with free OpenRouter models)
 - 📥 **Import from Obsidian** — one-time import of an existing vault, one entry per note
@@ -78,6 +79,12 @@ The assistant is read-only; entries are only created by capturing.
 
 ---
 
+## Quick-capture widget
+
+Add it from **Settings → Add quick-capture widget**, or long-press the home screen → Widgets → memory.ai. Tapping it opens `memoryai://capture`: the screen starts listening immediately, and the green/red button (or the back button) saves the entry and exits to where you were. If nothing was said, it just closes.
+
+---
+
 ## Voice input
 
 Uses Android's built-in speech recognizer (Google voice typing on the OnePlus 15) in continuous mode:
@@ -94,7 +101,7 @@ If voice does nothing, make sure **Google** ("Speech Recognition & Synthesis Ser
 ## Architecture
 
 ```
-Mic (Android STT) or keyboard
+Mic (Android STT) or keyboard   ← also reachable from the home-screen widget (memoryai://capture)
         ↓
 EntryDB (SQLite: entries + FTS5 index, triggers keep it in sync)
         ↓
