@@ -9,6 +9,7 @@ import { AppNavigator } from '@/navigation/AppNavigator';
 import type { RootStackParamList } from '@/navigation/AppNavigator';
 import { loadAllProviderConfig } from '@/services/llm/ProviderConfig';
 import { openEntryDB } from '@/services/db/EntryDB';
+import { startSync } from '@/services/sync/SyncManager';
 
 const theme = {
   ...MD3LightTheme,
@@ -30,7 +31,7 @@ const linking: LinkingOptions<RootStackParamList> = {
 export default function App() {
   useEffect(() => {
     loadAllProviderConfig();
-    openEntryDB().catch(() => {});
+    openEntryDB().then(startSync).catch(() => {});
   }, []);
 
   return (

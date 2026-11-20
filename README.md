@@ -40,6 +40,7 @@ Built for Android as a native APK using React Native + Expo bare workflow.
 - 💬 **Ask your entries** — chat with an assistant that searches your entries to answer (works with free OpenRouter models)
 - 📥 **Import from Obsidian** — one-time import of an existing vault, one entry per note
 - 🔒 **Local-first** — everything lives in a SQLite database on the phone
+- ☁️ **Automatic backup** — every save is pushed to a private GitHub repo as a markdown file, with no button to press
 
 ---
 
@@ -85,6 +86,21 @@ Add it from **Settings → Add quick-capture widget**, or long-press the home sc
 
 ---
 
+## Backup (GitHub)
+
+Entries are backed up to a **private** GitHub repository, one markdown file per entry (`entries/2026/11/2026-11-20-<id>.md`), so you can read them on GitHub or clone the repo into Obsidian.
+
+**Setup** (once): create an empty private repo, create a fine-grained token limited to that repo with **Contents: Read and write**, then in **Settings → Backup** enter the repo (`owner/name`) and paste the token.
+
+**How it behaves**
+- Every save, edit or delete is pushed a couple of seconds later as a single commit; the quick-capture screen waits briefly so the entry is backed up before it closes
+- Offline or rate-limited? Changes stay queued and retry with backoff, and again whenever the app opens
+- The app refuses to write to a public repository
+- **Restore from backup** adds any entries missing on the phone (it never overwrites local text), which is how you set up a new phone
+- Fine-grained tokens expire (up to a year); when that happens Settings shows "token invalid or expired" and the cloud icon on the home screen turns red
+
+---
+
 ## Voice input
 
 Uses Android's built-in speech recognizer (Google voice typing on the OnePlus 15) in continuous mode:
@@ -106,6 +122,8 @@ Mic (Android STT) or keyboard   ← also reachable from the home-screen widget (
 EntryDB (SQLite: entries + FTS5 index, triggers keep it in sync)
         ↓
 Home: list · search · edit · delete
+        ↓ every change
+SyncManager (debounce · retry · backoff) → one commit per batch → private GitHub repo
         ↓
 Ask: AgentClient tool loop → search_entries / recent_entries
         ↓

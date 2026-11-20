@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useDictation } from '@/hooks/useDictation';
 import { addEntry } from '@/services/db/EntryDB';
+import { syncNowWithin } from '@/services/sync/SyncManager';
 
 /**
  * Opened by the home-screen widget. Starts listening immediately; one tap saves
@@ -18,6 +19,7 @@ export function CaptureScreen() {
   const dictation = useDictation();
   const pulse = useRef(new Animated.Value(1)).current;
   const [saved, setSaved] = useState(false);
+  const [backedUp, setBackedUp] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const savingRef = useRef(false);
   const textRef = useRef('');
@@ -58,7 +60,11 @@ export function CaptureScreen() {
         await addEntry(text);
         setSaved(true);
         setSaveError(null);
-        setTimeout(() => BackHandler.exitApp(), 450);
+        // Push right away and give it a moment: once we exit, Android may freeze the app.
+        // If it does not finish in time the entry stays queued and goes out on the next launch.
+        const ok = await syncNowWithin(2500);
+        setBackedUp(ok);
+        setTimeout(() => BackHandler.exitApp(), ok ? 350 : 150);
         return;
       }
       BackHandler.exitApp(); // nothing said — just close
@@ -84,7 +90,7 @@ export function CaptureScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]}>
       <Text style={styles.status}>
-        {saved ? 'Saved ✓' : isRecording ? 'Listening…' : hasText ? 'Paused' : 'Tap the mic to start'}
+        {saved ? (backedUp ? 'Saved & backed up ✓' : 'Saved ✓') : isRecording ? 'Listening…' : hasText ? 'Paused' : 'Tap the mic to start'}
       </Text>
 
       <TextInput

@@ -7,6 +7,11 @@ import { requestPinWidget } from 'react-native-android-widget';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
 import { countEntries } from '@/services/db/EntryDB';
 import { importVault } from '@/services/import/VaultImport';
+import { useSyncStatus } from '@/hooks/useSyncStatus';
+import { clearSyncConfig, loadSyncParts, saveSyncRepo, saveSyncToken } from '@/services/sync/SyncConfig';
+import { parseRepoInput } from '@/services/sync/repoInput';
+import { SyncError } from '@/services/sync/errors';
+import { resetSync, restoreFromBackup, syncNow, testConnection } from '@/services/sync/SyncManager';
 import {
   saveGeminiKey, saveGroqKey, saveClaudeKey, saveOpenRouterKey, saveActiveProvider,
   saveGeminiModelPref, saveGroqModelPref, saveClaudeModelPref, saveOpenRouterModelPref, loadStoredKeys,
@@ -188,7 +193,19 @@ function KeyModal({
   );
 }
 
+function syncStatusText(s: ReturnType<typeof useSyncStatus>): string {
+  if (s.state === 'syncing') return 'Syncing…';
+  if (s.state === 'error' && s.error) return `${s.error.message}${s.pending ? ` (${s.pending} waiting)` : ''} — tap to retry`;
+  if (s.pending > 0) return `${s.pending} waiting to back up — tap to sync now`;
+  if (s.lastSyncedAt) return `All backed up · ${new Date(s.lastSyncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  return 'Up to date';
+}
+
 export function SettingsScreen() {
+  const sync = useSyncStatus();
+  const [syncRepo, setSyncRepo] = useState('');
+  const [syncToken, setSyncToken] = useState('');
+  const [restoring, setRestoring] = useState('');
   const [importing, setImporting] = useState('');
   const [entryCount, setEntryCount] = useState(0);
   const [snack, setSnack] = useState('');
@@ -222,6 +239,10 @@ export function SettingsScreen() {
       setClaudeModelState(stored.claudeModel);
 
       setEntryCount(await countEntries());
+
+      const parts = await loadSyncParts();
+      setSyncRepo(parts.repo);
+      setSyncToken(parts.token);
     })();
   }, []);
 
@@ -312,6 +333,69 @@ export function SettingsScreen() {
   const openrouterModelLabel = OPENROUTER_MODELS.find(m => m.value === openrouterModel)?.label ?? openrouterModel;
   const claudeModelLabel = CLAUDE_MODELS.find(m => m.value === claudeModel)?.label ?? claudeModel;
   const providerLabel = LLM_PROVIDERS.find(p => p.value === activeProvider)?.label ?? activeProvider;
+
+  const handleSaveRepo = useCallback(async () => {
+    const parsed = parseRepoInput(keyDraft);
+    if (!parsed) {
+      setSnack('Enter the repository as owner/name, e.g. oneplusiota/memory-data.');
+      return;
+    }
+    const slug = `${parsed.owner}/${parsed.repo}`;
+    await saveSyncRepo(slug);
+    setSyncRepo(slug);
+    if (syncToken) {
+      setSnack('Backup repository saved. Syncing…');
+      resetSync();
+    } else {
+      setSnack('Repository saved. Now add the access token.');
+    }
+  }, [keyDraft, syncToken]);
+
+  const handleSaveToken = useCallback(async () => {
+    const token = keyDraft.trim();
+    if (!token) return;
+    const parsed = parseRepoInput(syncRepo);
+    if (!parsed) {
+      setSnack('Set the backup repository first.');
+      return;
+    }
+    setSnack('Checking the token…');
+    try {
+      await testConnection(parsed.owner, parsed.repo, token);
+    } catch (e) {
+      setSnack(e instanceof SyncError ? e.message : 'Could not reach GitHub.');
+      return;
+    }
+    await saveSyncToken(token);
+    setSyncToken(token);
+    setSnack('Backup connected. Syncing…');
+    resetSync();
+  }, [keyDraft, syncRepo]);
+
+  const handleDisconnectBackup = useCallback(async () => {
+    await clearSyncConfig();
+    setSyncRepo('');
+    setSyncToken('');
+    resetSync();
+    setSnack('Backup disconnected. Your entries on this phone are untouched.');
+  }, []);
+
+  const handleRestore = useCallback(async () => {
+    if (restoring) return;
+    try {
+      setRestoring('Reading backup…');
+      const r = await restoreFromBackup((done, total) => setRestoring(`Restoring ${done}/${total}…`));
+      setEntryCount(await countEntries());
+      setSnack(
+        r.found === 0 ? 'The backup is empty.' :
+        `Restored ${r.added} new of ${r.found} entries` + (r.unreadable ? `, ${r.unreadable} unreadable` : '') + '.',
+      );
+    } catch (e) {
+      setSnack(e instanceof SyncError ? e.message : 'Restore failed.');
+    } finally {
+      setRestoring('');
+    }
+  }, [restoring]);
 
   const handleAddWidget = useCallback(async () => {
     try {
@@ -426,6 +510,51 @@ export function SettingsScreen() {
 
         <Divider />
 
+        {/* ── BACKUP ── */}
+        <SectionHeader title="BACKUP" />
+        <View style={styles.card}>
+          <SettingRow
+            icon="github"
+            label="Private repository"
+            value={syncRepo || 'Not set (e.g. oneplusiota/memory-data)'}
+            onPress={() => openKeyModal('sync_repo', syncRepo)}
+          />
+          <View style={styles.cardDivider} />
+          <SettingRow
+            icon="key-outline"
+            label="Access token"
+            value={maskKey(syncToken)}
+            onPress={() => openKeyModal('sync_token', '')}
+          />
+          {!!syncRepo && !!syncToken && (
+            <>
+              <View style={styles.cardDivider} />
+              <SettingRow
+                icon="cloud-sync-outline"
+                label="Backup status"
+                value={syncStatusText(sync)}
+                onPress={() => { syncNow(); }}
+              />
+              <View style={styles.cardDivider} />
+              <SettingRow
+                icon="cloud-download-outline"
+                label="Restore from backup"
+                value={restoring || 'Adds entries missing on this phone'}
+                onPress={handleRestore}
+              />
+              <View style={styles.cardDivider} />
+              <SettingRow
+                icon="link-off"
+                label="Disconnect backup"
+                danger
+                onPress={handleDisconnectBackup}
+              />
+            </>
+          )}
+        </View>
+
+        <Divider />
+
         {/* ── WIDGET ── */}
         <SectionHeader title="HOME SCREEN" />
         <View style={styles.card}>
@@ -521,6 +650,25 @@ export function SettingsScreen() {
         onSave={handleSaveOpenRouterCustomModel}
         onClose={() => setOpenModal(null)}
         secure={false}
+      />
+      <KeyModal
+        visible={openModal === 'sync_repo'}
+        title="Backup repository"
+        placeholder="owner/name"
+        value={keyDraft}
+        onChange={setKeyDraft}
+        onSave={handleSaveRepo}
+        onClose={() => setOpenModal(null)}
+        secure={false}
+      />
+      <KeyModal
+        visible={openModal === 'sync_token'}
+        title="GitHub access token"
+        placeholder="github_pat_..."
+        value={keyDraft}
+        onChange={setKeyDraft}
+        onSave={handleSaveToken}
+        onClose={() => setOpenModal(null)}
       />
       <KeyModal
         visible={openModal === 'gemini_key'}

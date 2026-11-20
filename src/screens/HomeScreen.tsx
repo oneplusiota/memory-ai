@@ -22,6 +22,7 @@ import * as Clipboard from 'expo-clipboard';
 import { EntryCard } from '@/components/EntryCard';
 import { useDictation } from '@/hooks/useDictation';
 import { useEntries } from '@/hooks/useEntries';
+import { useSyncStatus } from '@/hooks/useSyncStatus';
 import type { Entry } from '@/services/db/EntryDB';
 import type { RootStackParamList } from '@/navigation/AppNavigator';
 
@@ -35,6 +36,7 @@ export function HomeScreen() {
 
   const { entries, query, setQuery, loading, error: listError, loadMore, add, edit, remove } = useEntries();
   const dictation = useDictation();
+  const sync = useSyncStatus();
   const [searching, setSearching] = useState(false);
   const [editing, setEditing] = useState<Entry | null>(null);
   const [editText, setEditText] = useState('');
@@ -154,6 +156,15 @@ export function HomeScreen() {
           <Text style={styles.title}>memory.ai</Text>
         )}
         <View style={styles.headerRight}>
+          {!searching && sync.state !== 'disabled' && (
+            <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={styles.headerBtn} accessibilityLabel="Backup status">
+              <MaterialCommunityIcons
+                name={sync.state === 'error' ? 'cloud-alert-outline' : sync.state === 'syncing' || sync.pending > 0 ? 'cloud-sync-outline' : 'cloud-check-outline'}
+                size={22}
+                color={sync.state === 'error' ? '#DC2626' : sync.pending > 0 || sync.state === 'syncing' ? '#D97706' : '#16A34A'}
+              />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity onPress={toggleSearch} style={styles.headerBtn} accessibilityLabel={searching ? 'Close search' : 'Search'}>
             <MaterialCommunityIcons name={searching ? 'close' : 'magnify'} size={24} color="#374151" />
           </TouchableOpacity>
