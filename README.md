@@ -222,11 +222,20 @@ npx expo run:android --device
 
 ## Releasing a New APK
 
-Tag the commit and push — GitHub Actions builds and attaches the APK automatically:
+Tag the commit and push — GitHub Actions builds, signs and attaches the APK automatically:
 
 ```bash
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-The workflow is in `.github/workflows/build.yml` and needs no secrets.
+### Signing key
+
+Release APKs are signed with a private key that is **never committed**. It lives in two places:
+
+- `~/.android/memory-ai-release.jks` + `~/.android/memory-ai-release.properties` on your Mac (used for local `assembleRelease`)
+- GitHub Actions secrets: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`
+
+> **Back up `memory-ai-release.jks` and its `.properties` file somewhere safe (a password manager works).** Android only installs an update if it is signed with the same key as the installed app. If the key is lost, the only way forward is to uninstall the app — which wipes local entries that were not yet backed up — and install a build signed with a new key.
+
+The release build fails on purpose when the key is missing, and CI verifies the APK is not signed with the debug key. Debug builds still use the throwaway `debug.keystore` (generate with `keytool` as shown in Setup, or copy `~/.android/debug.keystore`); it is gitignored.

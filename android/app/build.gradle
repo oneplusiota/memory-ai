@@ -104,15 +104,33 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        // Release key: never committed. CI provides it through environment variables;
+        // locally it is read from ~/.android/memory-ai-release.{jks,properties}.
+        release {
+            def localProps = new Properties()
+            def localPropsFile = new File(System.getProperty('user.home'), '.android/memory-ai-release.properties')
+            if (localPropsFile.exists()) localPropsFile.withInputStream { localProps.load(it) }
+
+            def keystorePath = System.getenv('ANDROID_KEYSTORE_PATH') ?: new File(System.getProperty('user.home'), '.android/memory-ai-release.jks').path
+            def storePass = System.getenv('ANDROID_KEYSTORE_PASSWORD') ?: localProps.getProperty('ANDROID_KEYSTORE_PASSWORD')
+            def alias = System.getenv('ANDROID_KEY_ALIAS') ?: localProps.getProperty('ANDROID_KEY_ALIAS')
+            def keyPass = System.getenv('ANDROID_KEY_PASSWORD') ?: localProps.getProperty('ANDROID_KEY_PASSWORD')
+
+            if (new File(keystorePath).exists() && storePass && alias && keyPass) {
+                storeFile file(keystorePath)
+                storePassword storePass
+                keyAlias alias
+                keyPassword keyPass
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            // Fail loudly instead of silently shipping an APK signed with the public debug key.
+            signingConfig signingConfigs.release
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
             minifyEnabled enableMinifyInReleaseBuilds
@@ -178,5 +196,15 @@ dependencies {
         implementation("com.facebook.react:hermes-android")
     } else {
         implementation jscFlavor
+    }
+}
+
+// A release build without the release key would be unsigned (or signed with a public key) — stop it.
+gradle.taskGraph.whenReady { graph ->
+    def wantsRelease = graph.allTasks.any { it.path.startsWith(':app:') && (it.name == 'assembleRelease' || it.name == 'bundleRelease' || it.name == 'packageRelease') }
+    if (wantsRelease && android.signingConfigs.release.storeFile == null) {
+        throw new GradleException(
+            'Release signing key not found. Set ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ' +
+            'ANDROID_KEY_PASSWORD, or place memory-ai-release.jks and memory-ai-release.properties in ~/.android/.')
     }
 }
