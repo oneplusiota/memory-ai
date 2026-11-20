@@ -45,9 +45,7 @@ export type ConversationResponse = {
   suggest_save: boolean;
 };
 
-export type STTMode = 'native' | 'gemini-audio' | 'native-corrected';
-
-export type LLMProvider = 'gemini' | 'groq' | 'claude';
+export type LLMProvider = 'gemini' | 'groq' | 'claude' | 'openrouter';
 
 export type ConversationMode = 'journal' | 'coach' | 'analyst' | 'devil' | 'tool_builder';
 

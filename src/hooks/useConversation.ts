@@ -12,9 +12,8 @@ import { agentChat } from '@/services/tools/AgentClient';
 import type { ToolStepEvent } from '@/services/tools/AgentClient';
 import { BUILTIN_TOOL_DEFINITIONS } from '@/services/tools/BuiltinTools';
 import { WEB_SEARCH_TOOL_DEFINITION } from '@/services/tools/WebSearchClient';
-import { CALENDAR_TOOL_DEFINITIONS } from '@/services/tools/CalendarClient';
 import { loadCustomTools } from '@/services/tools/ToolRegistry';
-import type { AgentMode, ConversationMessage, ConversationMode, RoutingDecision, STTMode, ToolDefinition } from '@/types';
+import type { AgentMode, ConversationMessage, ConversationMode, RoutingDecision, ToolDefinition } from '@/types';
 import * as SecureStore from 'expo-secure-store';
 
 const AGENT_MODE_KEY = 'agent_mode';
@@ -24,7 +23,7 @@ const CONVERSATION_MODE_KEY = 'conversation_mode';
 let msgIdCounter = 0;
 const mkId = () => String(++msgIdCounter);
 
-export function useConversation(sttMode: STTMode = 'native', initialMode?: ConversationMode) {
+export function useConversation(initialMode?: ConversationMode) {
   const { vaultUri } = useVault();
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const messagesRef = useRef<ConversationMessage[]>([]);
@@ -120,11 +119,9 @@ export function useConversation(sttMode: STTMode = 'native', initialMode?: Conve
     setTranscript(updated);
   }, []);
 
-  const { state: voiceState, error: voiceError, startListening, stopListening, postCorrect, reset: resetVoice } = useVoice(
-    handleAppend, handleFinalAppend, sttMode,
+  const { isRecording, error: voiceError, startListening, stopListening, reset: resetVoice } = useVoice(
+    handleAppend, handleFinalAppend,
   );
-
-  const isRecording = voiceState === 'listening';
 
   // Surface voice errors (permission denied, recognizer unavailable, etc.) to the UI
   useEffect(() => {
@@ -155,10 +152,7 @@ export function useConversation(sttMode: STTMode = 'native', initialMode?: Conve
     }
   }, [vaultUri]);
 
-  const sendMessage = useCallback(async (text: string) => {
-    const finalText = sttMode === 'native-corrected' ? await postCorrect(text) : text;
-    if (!finalText.trim()) return;
-
+  const sendText = useCallback(async (finalText: string) => {
     setIsSending(true);
     setError(null);
     baseRef.current = '';
@@ -183,7 +177,6 @@ export function useConversation(sttMode: STTMode = 'native', initialMode?: Conve
         const allTools: ToolDefinition[] = [
           ...BUILTIN_TOOL_DEFINITIONS,
           WEB_SEARCH_TOOL_DEFINITION,
-          ...CALENDAR_TOOL_DEFINITIONS,
           ...customTools,
         ];
 
@@ -241,7 +234,23 @@ export function useConversation(sttMode: STTMode = 'native', initialMode?: Conve
       setIsSending(false);
       resetVoice();
     }
-  }, [sttMode, postCorrect, resetVoice, autosave, conversationMode, vaultUri, agentMode, customTools]);
+  }, [resetVoice, autosave, conversationMode, vaultUri, agentMode, customTools]);
+
+  const sendingRef = useRef(false);
+
+  /** Stops the mic (waiting for the recognizer's last words), then sends whatever is in the box. */
+  const sendMessage = useCallback(async () => {
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+    try {
+      await stopListening();
+      const finalText = baseRef.current.trim();
+      if (!finalText) return;
+      await sendText(finalText);
+    } finally {
+      sendingRef.current = false;
+    }
+  }, [stopListening, sendText]);
 
   const saveToVault = useCallback(async (): Promise<{
     decision: RoutingDecision;

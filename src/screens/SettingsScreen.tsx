@@ -3,7 +3,6 @@ import { Animated, Keyboard, Modal, ScrollView, StyleSheet, TouchableOpacity, Vi
 import { Button, Snackbar, Text, TextInput } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
-import { useAuth } from '@/hooks/useAuth';
 import { useVault } from '@/hooks/useVault';
 import { clearNotes, getAllNotes, getNoteCount, upsertNote, upsertLinks, setEmbedding } from '@/services/db/VaultDB';
 import {
@@ -20,63 +19,58 @@ import { parseNote } from '@/services/vault/MarkdownParser';
 import { extractDensestParagraph } from '@/utils/textUtils';
 import { noteTitle } from '@/utils/pathUtils';
 import {
-  saveGeminiKey, saveGroqKey, saveClaudeKey, saveActiveProvider,
-  saveGeminiModelPref, saveGroqModelPref, saveClaudeModelPref, loadStoredKeys,
+  saveGeminiKey, saveGroqKey, saveClaudeKey, saveOpenRouterKey, saveActiveProvider,
+  saveGeminiModelPref, saveGroqModelPref, saveClaudeModelPref, saveOpenRouterModelPref, loadStoredKeys,
 } from '@/services/llm/ProviderConfig';
 import {
   saveWebSearchProvider, saveTavilyKey, saveSerperKey,
   loadStoredWebSearchKeys,
 } from '@/services/tools/WebSearchClient';
-import type { AgentMode, LLMProvider, STTMode, WebSearchProvider } from '@/types';
+import type { AgentMode, LLMProvider, WebSearchProvider } from '@/types';
 import * as SecureStore from 'expo-secure-store';
 
 const AGENT_MODE_KEY = 'agent_mode';
 
-const STT_MODE_KEY = 'stt_mode';
-
 const GEMINI_MODELS = [
-  // ── Free tier ──
-  { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', desc: '1,500/day free · recommended' },
-  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', desc: '500/day free · most capable free' },
-  { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash', desc: '1,500/day free · legacy' },
-  // ── Paid ──
-  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro ★', desc: 'Paid · best reasoning & coding' },
-  { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro ★', desc: 'Paid · 1M context window' },
-  { value: 'gemini-2.0-flash-thinking-exp', label: 'Gemini 2.0 Flash Thinking ★', desc: 'Paid · extended thinking' },
+  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', desc: 'Free tier · recommended' },
+  { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', desc: 'Free tier · fastest, highest limits' },
+  { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash (preview)', desc: 'Newest · limits vary' },
+  { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro ★', desc: 'Paid · best reasoning' },
 ];
 
 const GROQ_MODELS = [
-  // ── Free tier ──
-  { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B Versatile', desc: 'Best quality · recommended' },
-  { value: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B Instant', desc: 'Fastest · low latency' },
-  { value: 'llama3-70b-8192', label: 'Llama 3 70B', desc: 'High quality · 8k context' },
-  { value: 'llama3-8b-8192', label: 'Llama 3 8B', desc: 'Fast · 8k context' },
-  { value: 'mixtral-8x7b-32768', label: 'Mixtral 8x7B', desc: 'Long context · 32k tokens' },
-  { value: 'gemma2-9b-it', label: 'Gemma 2 9B', desc: 'Google · instruction-tuned' },
-  // ── Paid tier ──
-  { value: 'llama-3.3-70b-specdec', label: 'Llama 3.3 70B SpecDec ★', desc: 'Paid · speculative decoding, faster' },
-  { value: 'llama-3.2-90b-vision-preview', label: 'Llama 3.2 90B Vision ★', desc: 'Paid · multimodal, largest Llama' },
-  { value: 'deepseek-r1-distill-llama-70b', label: 'DeepSeek R1 70B ★', desc: 'Paid · chain-of-thought reasoning' },
-  { value: 'qwen-qwq-32b', label: 'Qwen QwQ 32B ★', desc: 'Paid · strong reasoning model' },
+  { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B Versatile', desc: 'Free · recommended' },
+  { value: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B', desc: 'Free · strong reasoning & tool use' },
+  { value: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B', desc: 'Free · fast' },
+  { value: 'meta-llama/llama-4-scout-17b-16e-instruct', label: 'Llama 4 Scout', desc: 'Free · long context' },
+  { value: 'qwen/qwen3-32b', label: 'Qwen3 32B', desc: 'Free · reasoning' },
+  { value: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B Instant', desc: 'Free · lowest latency' },
   { value: 'moonshotai/kimi-k2-instruct', label: 'Kimi K2 ★', desc: 'Paid · agentic & tool use' },
 ];
 
 const CLAUDE_MODELS = [
-  // ── Claude 4.x ──
   { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', desc: 'Cheapest · fastest response' },
   { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', desc: 'Balanced · recommended' },
   { value: 'claude-opus-4-8', label: 'Claude Opus 4.8 ★', desc: 'Most capable · highest cost' },
 ];
 
-const STT_OPTIONS: { value: STTMode; label: string; desc: string }[] = [
-  { value: 'native', label: 'Native Android STT', desc: 'Fast, free, works offline' },
-  { value: 'gemini-audio', label: 'Gemini Audio', desc: 'Best accuracy, needs internet' },
-  { value: 'native-corrected', label: 'Native + AI correction', desc: 'Native speed + AI cleanup' },
+// Free OpenRouter models that support tool calling. The free catalogue rotates often, so
+// "openrouter/free" (auto-picks an available free model) is the default and any other
+// model id can be typed in via "Custom model…".
+const OPENROUTER_CUSTOM = '__custom__';
+const OPENROUTER_MODELS = [
+  { value: 'openrouter/free', label: 'Free Models Router', desc: 'Auto-picks an available free model · recommended' },
+  { value: 'nvidia/nemotron-3-ultra-550b-a55b:free', label: 'Nemotron 3 Ultra', desc: 'Free · largest · 1M context' },
+  { value: 'google/gemma-4-31b-it:free', label: 'Gemma 4 31B', desc: 'Free · 262k context' },
+  { value: 'google/gemma-4-26b-a4b-it:free', label: 'Gemma 4 26B A4B', desc: 'Free · fast · 262k context' },
+  { value: 'inclusionai/ling-3.2-flash:free', label: 'Ling 3.2 Flash', desc: 'Free · 1M context' },
+  { value: OPENROUTER_CUSTOM, label: 'Custom model…', desc: 'Enter any OpenRouter model id' },
 ];
 
 const LLM_PROVIDERS: { value: LLMProvider; label: string; desc: string }[] = [
-  { value: 'gemini', label: 'Gemini', desc: '1,500 req/day free' },
-  { value: 'groq', label: 'Groq', desc: '14,400 req/day free' },
+  { value: 'openrouter', label: 'OpenRouter', desc: 'Free models · one key' },
+  { value: 'gemini', label: 'Gemini', desc: 'Google AI Studio · free tier' },
+  { value: 'groq', label: 'Groq', desc: 'Fast · free tier' },
   { value: 'claude', label: 'Claude', desc: 'Anthropic · pay-per-use' },
 ];
 
@@ -169,11 +163,12 @@ function PickerModal<T extends string>({
 }
 
 function KeyModal({
-  visible, title, placeholder, value, onChange, onSave, onClose,
+  visible, title, placeholder, value, onChange, onSave, onClose, secure = true,
 }: {
   visible: boolean;
   title: string;
   placeholder: string;
+  secure?: boolean;
   value: string;
   onChange: (t: string) => void;
   onSave: () => void;
@@ -203,7 +198,7 @@ function KeyModal({
             label={placeholder}
             value={value}
             onChangeText={onChange}
-            secureTextEntry
+            secureTextEntry={secure}
             autoCapitalize="none"
             autoCorrect={false}
             style={styles.keyModalInput}
@@ -222,7 +217,6 @@ function KeyModal({
 }
 
 export function SettingsScreen() {
-  const { authState, userEmail, signIn, signOut } = useAuth();
   const { vaultUri, pickVault, clearVault } = useVault();
   const [indexing, setIndexing] = useState(false);
   const [noteCount, setNoteCount] = useState(0);
@@ -236,13 +230,15 @@ export function SettingsScreen() {
   const [embeddedCount, setEmbeddedCount] = useState(0);
 
   // LLM state
-  const [activeProvider, setActiveProviderState] = useState<LLMProvider>('gemini');
+  const [activeProvider, setActiveProviderState] = useState<LLMProvider>('openrouter');
   const [geminiKey, setGeminiKeyState] = useState('');
   const [groqKey, setGroqKeyState] = useState('');
   const [claudeKey, setClaudeKeyState] = useState('');
-  const [geminiModel, setGeminiModelState] = useState('gemini-2.0-flash');
+  const [openrouterKey, setOpenRouterKeyState] = useState('');
+  const [openrouterModel, setOpenRouterModelState] = useState('openrouter/free');
+  const [geminiModel, setGeminiModelState] = useState('gemini-2.5-flash');
   const [groqModel, setGroqModelState] = useState('llama-3.3-70b-versatile');
-  const [claudeModel, setClaudeModelState] = useState('claude-sonnet-4-5');
+  const [claudeModel, setClaudeModelState] = useState('claude-sonnet-4-6');
 
   // Web search state
   const [webSearchProvider, setWebSearchProviderState] = useState<WebSearchProvider>('tavily');
@@ -251,7 +247,6 @@ export function SettingsScreen() {
 
   // Agent / STT state
   const [agentMode, setAgentModeState] = useState<AgentMode>('agentic');
-  const [sttMode, setSttModeState] = useState<STTMode>('native');
 
   // Modal state — one open at a time
   const [openModal, setOpenModal] = useState<string | null>(null);
@@ -263,6 +258,8 @@ export function SettingsScreen() {
       if (stored.geminiKey) setGeminiKeyState(stored.geminiKey);
       if (stored.groqKey) setGroqKeyState(stored.groqKey);
       if (stored.claudeKey) setClaudeKeyState(stored.claudeKey);
+      if (stored.openrouterKey) setOpenRouterKeyState(stored.openrouterKey);
+      setOpenRouterModelState(stored.openrouterModel);
       setActiveProviderState(stored.activeProvider);
       setGeminiModelState(stored.geminiModel);
       setGroqModelState(stored.groqModel);
@@ -275,8 +272,6 @@ export function SettingsScreen() {
 
       const am = await SecureStore.getItemAsync(AGENT_MODE_KEY);
       if (am) setAgentModeState(am as AgentMode);
-      const sm = await SecureStore.getItemAsync(STT_MODE_KEY);
-      if (sm) setSttModeState(sm as STTMode);
 
       // Load note count from SQLite
       const count = await getNoteCount();
@@ -330,6 +325,33 @@ export function SettingsScreen() {
     setSnack('Groq API key saved.');
   }, [keyDraft]);
 
+  const handleSaveOpenRouterKey = useCallback(async () => {
+    const key = keyDraft.trim();
+    if (!key) return;
+    await saveOpenRouterKey(key);
+    setOpenRouterKeyState(key);
+    setSnack('OpenRouter API key saved.');
+  }, [keyDraft]);
+
+  const handleSelectOpenRouterModel = useCallback(async (m: string) => {
+    if (m === OPENROUTER_CUSTOM) {
+      setKeyDraft(openrouterModel);
+      setOpenModal('openrouter_custom_model');
+      return;
+    }
+    setOpenRouterModelState(m);
+    await saveOpenRouterModelPref(m);
+    setSnack('OpenRouter model updated.');
+  }, [openrouterModel]);
+
+  const handleSaveOpenRouterCustomModel = useCallback(async () => {
+    const m = keyDraft.trim();
+    if (!m) return;
+    setOpenRouterModelState(m);
+    await saveOpenRouterModelPref(m);
+    setSnack('OpenRouter model updated.');
+  }, [keyDraft]);
+
   const handleSaveClaudeKey = useCallback(async () => {
     const key = keyDraft.trim();
     if (!key) return;
@@ -372,11 +394,6 @@ export function SettingsScreen() {
     await SecureStore.setItemAsync(AGENT_MODE_KEY, m);
   }, []);
 
-  const handleSelectSttMode = useCallback(async (m: STTMode) => {
-    setSttModeState(m);
-    await SecureStore.setItemAsync(STT_MODE_KEY, m);
-  }, []);
-
   const openKeyModal = (id: string, currentValue: string) => {
     setKeyDraft(currentValue);
     setOpenModal(id);
@@ -385,10 +402,10 @@ export function SettingsScreen() {
   const maskKey = (k: string) => k ? `••••••••${k.slice(-4)}` : 'Not set';
   const geminiModelLabel = GEMINI_MODELS.find(m => m.value === geminiModel)?.label ?? geminiModel;
   const groqModelLabel = GROQ_MODELS.find(m => m.value === groqModel)?.label ?? groqModel;
+  const openrouterModelLabel = OPENROUTER_MODELS.find(m => m.value === openrouterModel)?.label ?? openrouterModel;
   const claudeModelLabel = CLAUDE_MODELS.find(m => m.value === claudeModel)?.label ?? claudeModel;
   const webSearchLabel = WEB_SEARCH_PROVIDERS.find(p => p.value === webSearchProvider)?.label ?? webSearchProvider;
   const agentModeLabel = AGENT_MODES.find(m => m.value === agentMode)?.label ?? agentMode;
-  const sttLabel = STT_OPTIONS.find(m => m.value === sttMode)?.label ?? sttMode;
   const providerLabel = LLM_PROVIDERS.find(p => p.value === activeProvider)?.label ?? activeProvider;
 
   const rebuildIndex = useCallback(async (uri: string) => {
@@ -481,7 +498,23 @@ export function SettingsScreen() {
             onPress={() => setOpenModal('provider')}
           />
           <View style={styles.cardDivider} />
-          {activeProvider === 'gemini' ? (
+          {activeProvider === 'openrouter' ? (
+            <>
+              <SettingRow
+                icon="key-outline"
+                label="OpenRouter API Key"
+                value={maskKey(openrouterKey)}
+                onPress={() => openKeyModal('openrouter_key', openrouterKey)}
+              />
+              <View style={styles.cardDivider} />
+              <SettingRow
+                icon="chip"
+                label="OpenRouter Model"
+                value={openrouterModelLabel}
+                onPress={() => setOpenModal('openrouter_model')}
+              />
+            </>
+          ) : activeProvider === 'gemini' ? (
             <>
               <SettingRow
                 icon="key-outline"
@@ -576,19 +609,6 @@ export function SettingsScreen() {
 
         <Divider />
 
-        {/* ── VOICE ── */}
-        <SectionHeader title="VOICE" />
-        <View style={styles.card}>
-          <SettingRow
-            icon="microphone-outline"
-            label="Speech-to-Text Mode"
-            value={sttLabel}
-            onPress={() => setOpenModal('stt_mode')}
-          />
-        </View>
-
-        <Divider />
-
         {/* ── VAULT ── */}
         <SectionHeader title="VAULT" />
         <View style={styles.card}>
@@ -604,30 +624,6 @@ export function SettingsScreen() {
             }
             onPress={() => setOpenModal('vault')}
           />
-        </View>
-
-        <Divider />
-
-        {/* ── ACCOUNT ── */}
-        <SectionHeader title="ACCOUNT" />
-        <View style={styles.card}>
-          {authState === 'signed-in' ? (
-            <>
-              <View style={styles.accountRow}>
-                <View style={styles.settingIconWrap}>
-                  <MaterialCommunityIcons name="account-circle-outline" size={18} color="#6D28D9" />
-                </View>
-                <View style={styles.settingContent}>
-                  <Text style={styles.settingLabel}>{userEmail}</Text>
-                  <Text style={styles.settingValue}>Google account · signed in</Text>
-                </View>
-              </View>
-              <View style={styles.cardDivider} />
-              <SettingRow icon="logout" label="Sign Out" danger onPress={signOut} />
-            </>
-          ) : (
-            <SettingRow icon="google" label="Sign in with Google" onPress={signIn} />
-          )}
         </View>
 
         <View style={styles.bottomPad} />
@@ -683,15 +679,34 @@ export function SettingsScreen() {
         onClose={() => setOpenModal(null)}
       />
       <PickerModal
-        visible={openModal === 'stt_mode'}
-        title="Speech-to-Text Mode"
-        options={STT_OPTIONS}
-        selected={sttMode}
-        onSelect={handleSelectSttMode}
+        visible={openModal === 'openrouter_model'}
+        title="OpenRouter Model"
+        options={OPENROUTER_MODELS}
+        selected={openrouterModel}
+        onSelect={handleSelectOpenRouterModel}
         onClose={() => setOpenModal(null)}
       />
 
       {/* ── Key entry modals ── */}
+      <KeyModal
+        visible={openModal === 'openrouter_key'}
+        title="OpenRouter API Key"
+        placeholder="sk-or-..."
+        value={keyDraft}
+        onChange={setKeyDraft}
+        onSave={handleSaveOpenRouterKey}
+        onClose={() => setOpenModal(null)}
+      />
+      <KeyModal
+        visible={openModal === 'openrouter_custom_model'}
+        title="OpenRouter Model ID"
+        placeholder="e.g. vendor/model:free"
+        value={keyDraft}
+        onChange={setKeyDraft}
+        onSave={handleSaveOpenRouterCustomModel}
+        onClose={() => setOpenModal(null)}
+        secure={false}
+      />
       <KeyModal
         visible={openModal === 'gemini_key'}
         title="Gemini API Key"
@@ -879,11 +894,6 @@ const styles = StyleSheet.create({
   settingLabel: { fontSize: 15, color: '#111827', fontWeight: '500' },
   settingLabelDanger: { color: '#EF4444' },
   settingValue: { fontSize: 13, color: '#9CA3AF', marginTop: 1 },
-
-  accountRow: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 14, paddingVertical: 13, gap: 12,
-  },
 
   bottomPad: { height: 20 },
 

@@ -15,7 +15,6 @@ import { useVault } from '@/hooks/useVault';
 import { loadCustomTools } from '@/services/tools/ToolRegistry';
 import { BUILTIN_TOOL_DEFINITIONS } from '@/services/tools/BuiltinTools';
 import { WEB_SEARCH_TOOL_DEFINITION } from '@/services/tools/WebSearchClient';
-import { CALENDAR_TOOL_DEFINITIONS } from '@/services/tools/CalendarClient';
 import type { RootStackParamList } from '@/navigation/AppNavigator';
 import type { ToolDefinition } from '@/types';
 
@@ -24,7 +23,6 @@ type Nav = StackNavigationProp<RootStackParamList, 'Tools'>;
 const ALL_BUILTIN: ToolDefinition[] = [
   ...BUILTIN_TOOL_DEFINITIONS,
   WEB_SEARCH_TOOL_DEFINITION,
-  ...CALENDAR_TOOL_DEFINITIONS,
 ];
 
 export function ToolsScreen() {

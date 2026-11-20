@@ -54,9 +54,6 @@ jobs:
       - name: Create local.properties
         run: echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
 
-      - name: Decode google-services.json
-        run: echo "${{ secrets.GOOGLE_SERVICES_JSON }}" | base64 -d > android/app/google-services.json
-
       - name: Grant Gradle execute permission
         run: chmod +x android/gradlew
 
@@ -86,8 +83,6 @@ jobs:
             2. On Android: **Settings → Apps → Special app access → Install unknown apps** → allow your browser/Files app
             3. Open the APK and tap Install
             4. Launch memory.ai → Settings → add your API key → pick your Obsidian vault
-
-            > **Note**: Google Sign-In won't work with this pre-built APK (identity-only, not required for AI features).
 
             ## What's new
             See [CHANGELOG](https://github.com/oneplusiota/memory-ai/commits/main) for details.

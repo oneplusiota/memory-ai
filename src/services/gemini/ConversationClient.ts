@@ -9,6 +9,7 @@ import { ROUTING_RESPONSE_SCHEMA } from './RoutingSchema';
 import { SYSTEM_PROMPT as SAVE_SYSTEM_PROMPT } from './RoutingPrompt';
 import { llmChat } from '@/services/llm/LLMClient';
 import type { LLMMessage } from '@/services/llm/LLMClient';
+import { parseModelJson } from '@/utils/jsonUtils';
 import { sanitizeDates, getTodayDateString, getTimeHeading } from '@/utils/dateUtils';
 
 const CONVERSATION_SCHEMA_DESCRIPTION = `{
@@ -43,7 +44,7 @@ export async function chat(
     { role: 'user', content: userPrompt },
   ];
   const text = await llmChat(messages, CONVERSATION_RESPONSE_SCHEMA, CONVERSATION_SCHEMA_DESCRIPTION);
-  return JSON.parse(text) as ConversationResponse;
+  return parseModelJson<ConversationResponse>(text);
 }
 
 export async function saveConversation(
@@ -58,14 +59,14 @@ export async function saveConversation(
     { role: 'user', content: userPrompt },
   ];
   const text = await llmChat(messages, ROUTING_RESPONSE_SCHEMA, ROUTING_SCHEMA_DESCRIPTION);
-  const decision = JSON.parse(text) as RoutingDecision;
+  const decision = parseModelJson<RoutingDecision>(text);
 
   // Sanitize dates: replace any hallucinated years with the correct one
   const correctYear = today.slice(0, 4);
   return {
     ...decision,
     daily_entry: sanitizeDates(decision.daily_entry, correctYear),
-    notes: decision.notes.map((n) => ({
+    notes: (decision.notes ?? []).map((n) => ({
       ...n,
       content: sanitizeDates(n.content, correctYear),
     })),

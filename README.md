@@ -1,6 +1,6 @@
 # memory.ai
 
-> A voice-first AI journaling app that captures your thoughts and routes them into your Obsidian vault as structured, Dataview-queryable Zettelkasten notes.
+> A quick-capture, voice-first note-taking app for Android. Tap the mic, talk, and the AI files your thoughts into your Obsidian vault as structured, Dataview-queryable notes. Tuned for the OnePlus 15.
 
 Built for Android as a native APK using React Native + Expo bare workflow.
 
@@ -12,7 +12,7 @@ Built for Android as a native APK using React Native + Expo bare workflow.
 - [Features](#features)
 - [LLM Providers](#llm-providers)
 - [AI Tools](#ai-tools)
-- [STT Modes](#stt-modes)
+- [Voice input](#voice-input)
 - [Architecture](#architecture)
 - [Vault Structure](#vault-structure)
 - [Tech Stack](#tech-stack)
@@ -20,7 +20,6 @@ Built for Android as a native APK using React Native + Expo bare workflow.
 - [Setup & Build](#setup--build)
 - [Note Schema Reference](#note-schema-reference)
 - [Releasing a New APK](#releasing-a-new-apk)
-- [License](#license)
 
 ---
 
@@ -31,22 +30,20 @@ Built for Android as a native APK using React Native + Expo bare workflow.
 1. Go to the [**Releases page**](https://github.com/oneplusiota/memory-ai/releases) and download the latest `memory-ai-vX.X.X.apk`
 2. On your Android phone: **Settings → Apps → Special app access → Install unknown apps** → allow your browser or Files app
 3. Open the downloaded APK and tap **Install**
-4. Launch **memory.ai** → **Settings (⚙️)** → enter your API key → pick your Obsidian vault folder
-
-> **Note on Google Sign-In**: The pre-built APK uses a CI-generated keystore, so Google Sign-In won't work. Sign-In is identity-only and **not required** — all AI features and vault sync work without it.
+4. Launch **memory.ai** → **Settings (⚙️)** → enter your API key (OpenRouter's free models need no card) → pick your Obsidian vault folder
 
 ---
 
 ## Features
 
-- 🎙️ **Tap-to-record** — live, editable transcript with continuous Android STT; auto-restarts on silence
+- 🎙️ **Tap-to-record** — big thumb-reach mic button, live editable transcript, continuous Android STT that restarts on silence and falls back to on-device recognition offline
 - 🧠 **AI conversation** — chat with an assistant that knows your notes (answers questions, acknowledges captures)
 - 🤖 **Agentic tool calling** — AI can search your vault, read/create/update notes, and search the web during a conversation
 - 📝 **Smart routing** — AI decides whether to log to the daily note, update an existing atom, or create a new one
 - 📂 **Obsidian-native structure** — `daily/`, `atoms/`, `conversations/` with Dataview-compatible frontmatter
 - 🔍 **Local hybrid search** — on-device TF-IDF + wikilink graph, no API calls for indexing
 - 📚 **Conversation history** — every session saved to your vault, viewable in-app
-- 🔄 **Multi-provider LLM** — Gemini, Groq, or Claude; free and paid models; factory-pattern architecture for easy extensibility
+- 🔄 **Multi-provider LLM** — OpenRouter (free models), Gemini, Groq, or Claude
 - 🛠️ **Custom tools** — define your own tools as `.tool.md` files in your vault
 - ✏️ **Edit while speaking** — fix words in real-time before sending
 
@@ -54,43 +51,25 @@ Built for Android as a native APK using React Native + Expo bare workflow.
 
 ## LLM Providers
 
-memory.ai uses a **factory pattern** — providers are registered adapters, making it trivial to add new ones. Three providers are built in:
+Providers are adapters behind one factory (`LLMAdapterFactory`). Four are built in:
+
+### OpenRouter (default) — free models
+
+One key gives access to the free model pool. Pick **Free Models Router** (`openrouter/free`, auto-selects an available free model), one of the listed `:free` models, or choose **Custom model…** and paste any model id from [openrouter.ai/models](https://openrouter.ai/models?max_price=0). The free catalogue rotates often, so a model id that stops working just needs swapping. Agentic vault tools need a model with tool-calling support; the listed models have it.
 
 ### Gemini (Google AI Studio)
 
-| Model | Tier | Notes |
-|---|---|---|
-| Gemini 2.0 Flash | Free · 1,500/day | Recommended default |
-| Gemini 2.5 Flash | Free · 500/day | Most capable free model |
-| Gemini 1.5 Flash | Free · 1,500/day | Legacy |
-| Gemini 2.5 Pro ★ | Paid | Best reasoning & coding |
-| Gemini 1.5 Pro ★ | Paid | 1M context window |
-| Gemini 2.0 Flash Thinking ★ | Paid | Extended thinking |
+Gemini 2.5 Flash / Flash-Lite (free tier), Gemini 3 Flash (preview), Gemini 2.5 Pro (paid).
 
 ### Groq
 
-| Model | Tier | Notes |
-|---|---|---|
-| Llama 3.3 70B Versatile | Free | Recommended default |
-| Llama 3.1 8B Instant | Free | Fastest / lowest latency |
-| Llama 3 70B / 8B | Free | 8k context |
-| Mixtral 8x7B | Free | 32k context |
-| Gemma 2 9B | Free | Google instruction-tuned |
-| Llama 3.3 70B SpecDec ★ | Paid | Speculative decoding |
-| Llama 3.2 90B Vision ★ | Paid | Multimodal |
-| DeepSeek R1 70B ★ | Paid | Chain-of-thought reasoning |
-| Qwen QwQ 32B ★ | Paid | Strong reasoning |
-| Kimi K2 ★ | Paid | Agentic & tool use |
+Llama 3.3 70B, GPT-OSS 120B / 20B, Llama 4 Scout, Qwen3 32B, Llama 3.1 8B (free tier); Kimi K2 (paid).
 
 ### Claude (Anthropic)
 
-| Model | Tier | Notes |
-|---|---|---|
-| Claude Haiku 4.5 | Paid | Cheapest & fastest |
-| Claude Sonnet 4.6 | Paid | Balanced · recommended |
-| Claude Opus 4.8 ★ | Paid | Most capable · highest cost |
+Haiku 4.5, Sonnet 4.6, Opus 4.8 — pay-per-use.
 
-★ = paid / gated model. If your API key doesn't have access, the app shows a clear error message and prompts you to switch models.
+★ = paid / gated model. If your key lacks access, the app shows a clear error and prompts you to switch.
 
 ---
 
@@ -103,38 +82,38 @@ When a vault is connected, the AI runs in **agentic mode** and can call tools du
 | `search_vault` | Hybrid TF-IDF + graph search across your notes |
 | `read_note` | Read a specific note by path |
 | `create_note` | Create a new atom note |
-| `update_note` | Update an existing note |
+| `update_note` | Append to an existing note |
+| `append_daily_note` | Add a log entry to today's daily note |
 | `list_notes` | List notes filtered by type/area/status |
 | `get_date_time` | Current date and time |
 | `web_search` | Search the web (Tavily or Serper/Google) |
-| `get_calendar_events` | Read upcoming Google Calendar events |
-| `create_calendar_event` | Create a calendar event (requires confirmation) |
 | Custom `.tool.md` | User-defined tools stored in `vault/tools/` |
 
 **Agent modes** (configurable in Settings):
 - **Agentic loop** — AI calls tools in sequence until the task is complete
 - **Single call** — one round of tool calls, then stops
 
-Write operations (create/update note, create event) always ask for confirmation before executing.
+Write operations (create/update note) always ask for confirmation before executing.
 
 ---
 
-## STT Modes
+## Voice input
 
-| Mode | Speed | Accuracy | Notes |
-|---|---|---|---|
-| Native Android STT | Fast | Good | Default; continuous, auto-restarts on silence |
-| Gemini Audio | ~1–2 s | Best | Sends audio file to Gemini for transcription |
-| Native + AI Correction | ~1 s overhead | Better | Native speed + Gemini cleanup pass |
+Uses Android's built-in speech recognizer (Google voice typing on the OnePlus 15) in continuous mode:
 
-Switch in **Settings → Voice**.
+- Restarts itself after silence, so the mic stays open while you think
+- Falls back to on-device recognition when you're offline
+- Stopping waits for the recognizer's last words before sending, so the final sentence is never dropped
+- Releases the mic when you leave the app
+
+If voice does nothing, make sure **Google** ("Speech Recognition & Synthesis Services by Google") is enabled as the voice input service in Android settings.
 
 ---
 
 ## Architecture
 
 ```
-Voice Input (Android STT / Gemini Audio)
+Voice Input (Android STT)
         ↓
 Live Editable Transcript
         ↓
@@ -144,14 +123,13 @@ AgentClient — agentic tool-calling loop
   ├── search_vault  → HybridSearch (TF-IDF + wikilink graph)
   ├── read_note     → VaultScanner + MarkdownParser
   ├── create/update → VaultWriter (confirm before write)
-  ├── web_search    → Tavily / Serper (Google) API
-  └── calendar      → Google Calendar API
+  └── web_search    → Tavily / Serper (Google) API
         ↓
 LLMClient (provider-agnostic façade)
   └── LLMAdapterFactory
-        ├── GeminiAdapter   (generativelanguage.googleapis.com)
-        ├── GroqAdapter     (api.groq.com — OpenAI-compatible)
-        └── ClaudeAdapter   (api.anthropic.com)
+        ├── GeminiAdapter      (generativelanguage.googleapis.com)
+        ├── OpenAICompat       (Groq + OpenRouter)
+        └── ClaudeAdapter      (api.anthropic.com)
         ↓
 AI Response displayed in chat
         ↓
@@ -197,8 +175,7 @@ LIST FROM "conversations" WHERE saved_to_vault = true
 | Platform | Android (APK) |
 | File access | `expo-file-system` Storage Access Framework |
 | Voice STT | `expo-speech-recognition` (Android native, continuous) |
-| Audio STT | `expo-audio` (for Gemini Audio mode) |
-| LLM | `LLMAdapterFactory` — Gemini, Groq, Claude adapters |
+| LLM | `LLMAdapterFactory` — OpenRouter, Gemini, Groq, Claude adapters |
 | Agent loop | Custom `AgentClient` with tool-calling |
 | Local search | In-memory TF-IDF + BFS wikilink graph |
 | UI | React Native Paper + React Native Reanimated |
@@ -208,6 +185,10 @@ LIST FROM "conversations" WHERE saved_to_vault = true
 ---
 
 ## Getting API Keys
+
+### OpenRouter — free models
+1. Go to [openrouter.ai/keys](https://openrouter.ai/keys) → **Create key**
+2. Pick a `:free` model (or `openrouter/free`) in Settings. Free models are rate-limited, with a daily cap unless your account has credit.
 
 ### Gemini — Free tier (1,500 req/day)
 1. Go to [aistudio.google.com](https://aistudio.google.com) → **Get API key** → **Create API key**
@@ -257,14 +238,7 @@ set -x PATH $PATH $ANDROID_HOME/platform-tools $ANDROID_HOME/emulator
 set -x JAVA_HOME "/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 ```
 
-### 3. Firebase / Google Sign-In setup (one-time, optional)
-
-1. Create a project at [console.firebase.google.com](https://console.firebase.google.com)
-2. Add Android app → package name `com.memoryai.app`
-3. Add your debug SHA-1: `keytool -keystore ~/.android/debug.keystore -list -v -storepass android`
-4. Download `google-services.json` → place at `android/app/google-services.json`
-
-### 4. Build and run
+### 3. Build and run
 
 ```bash
 # Create debug keystore (first time only)
@@ -280,10 +254,10 @@ echo "sdk.dir=$HOME/Library/Android/sdk" > android/local.properties
 npx expo run:android --device
 ```
 
-### 5. First launch
+### 4. First launch
 
 1. Open **Settings** (⚙️ icon)
-2. Choose your **LLM Provider** (Gemini, Groq, or Claude) and enter your API key
+2. Choose your **LLM Provider** (OpenRouter is the default) and enter your API key
 3. Select a **model** (free models are listed first)
 4. Tap **Pick Vault Folder** → select your Obsidian vault
 5. Wait for indexing to complete
@@ -346,8 +320,4 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-The workflow (`.github/workflows/build.yml`) requires one GitHub secret:
-
-| Secret | How to get it |
-|---|---|
-| `GOOGLE_SERVICES_JSON` | `base64 -i android/app/google-services.json \| pbcopy` → paste in GitHub → Settings → Secrets → Actions |
+The workflow is in `.github/workflows/build.yml` and needs no secrets.

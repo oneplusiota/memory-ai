@@ -13,23 +13,23 @@
         "backgroundColor": "#6D28D9"
       },
       "permissions": [
-        "android.permission.RECORD_AUDIO",
-        "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.WRITE_EXTERNAL_STORAGE"
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "plugins": [
-      "expo-speech-recognition",
       [
-        "expo-file-system",
+        "expo-speech-recognition",
         {
-          "android": {
-            "requestLegacyExternalStorage": true
-          }
+          "microphonePermission": "memory.ai uses the microphone so you can dictate notes.",
+          "speechRecognitionPermission": "memory.ai uses speech recognition to turn your voice into text.",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox",
+            "com.google.android.as"
+          ]
         }
       ],
-      "expo-audio",
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-secure-store"
     ]
   }
 }

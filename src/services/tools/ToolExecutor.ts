@@ -1,12 +1,11 @@
 /**
  * ToolExecutor — dispatches tool calls to the right implementation.
- * Handles: built-in tools, web search, calendar, and custom .tool.md tools.
+ * Handles: built-in tools, web search, and custom .tool.md tools.
  */
 
 import type { ToolCall, ToolDefinition, ToolResult } from '@/types';
 import { executeBuiltinTool } from './BuiltinTools';
 import { executeWebSearch } from './WebSearchClient';
-import { executeCalendarTool } from './CalendarClient';
 import { executeCustomTool } from './ToolRegistry';
 
 const BUILTIN_NAMES = new Set([
@@ -15,12 +14,11 @@ const BUILTIN_NAMES = new Set([
   'list_notes',
   'create_note',
   'update_note',
+  'append_daily_note',
   'get_date_time',
 ]);
 
 const WEB_SEARCH_NAMES = new Set(['web_search']);
-
-const CALENDAR_NAMES = new Set(['list_events', 'create_event']);
 
 export async function executeTool(
   toolCall: ToolCall,
@@ -35,10 +33,6 @@ export async function executeTool(
 
   if (WEB_SEARCH_NAMES.has(name)) {
     return executeWebSearch(id, args);
-  }
-
-  if (CALENDAR_NAMES.has(name)) {
-    return executeCalendarTool(id, name, args);
   }
 
   // Custom tool from .tool.md

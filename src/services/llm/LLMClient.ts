@@ -38,20 +38,31 @@ export class LLMModelAccessError extends Error {
 
 /** Parses a non-ok API response and throws the most specific error type. Never returns. */
 function throwOnApiError(status: number, rawBody: string, provider: string, model: string): never {
+  let parsed: Record<string, unknown> = {};
+  try { parsed = JSON.parse(rawBody); } catch { /* ignore */ }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const apiMessage: string = (parsed as any)?.error?.message ?? "";
+
   if (status === 429) throw new LLMQuotaError(provider);
   if (status === 401) throw new LLMAuthError(provider);
 
-  if (status === 403) {
-    let parsed: Record<string, unknown> = {};
-    try { parsed = JSON.parse(rawBody); } catch { /* ignore */ }
+  if (provider === "OpenRouter") {
+    if (status === 402) {
+      throw new Error("OpenRouter: this model needs credits. Pick a model ending in :free (or openrouter/free) in Settings.");
+    }
+    if (status === 404) {
+      throw new Error(`OpenRouter: ${apiMessage || `model ${model} is unavailable or does not support tools`}. Try another model, or openrouter/free.`);
+    }
+  }
 
+  if (status === 403) {
     if (isModelAccessDenied(parsed, provider)) {
       throw new LLMModelAccessError(provider, model);
     }
     throw new LLMAuthError(provider);
   }
 
-  throw new Error(`${provider} ${status}: ${rawBody}`);
+  throw new Error(`${provider} ${status}: ${apiMessage || rawBody.slice(0, 300)}`);
 }
 
 function isModelAccessDenied(parsed: Record<string, unknown>, provider: string): boolean {
@@ -64,11 +75,19 @@ function isModelAccessDenied(parsed: Record<string, unknown>, provider: string):
     const msg: string = (p?.error?.message ?? "").toLowerCase();
     return p?.error?.status === "PERMISSION_DENIED" && (msg.includes("model") || msg.includes("not found"));
   }
-  if (provider === "Groq") {
-    const msg: string = (p?.error?.message ?? "").toLowerCase();
-    return msg.includes("model") && (msg.includes("not found") || msg.includes("not available") || msg.includes("permission"));
+  const msg: string = (p?.error?.message ?? "").toLowerCase();
+  return msg.includes("model") && (msg.includes("not found") || msg.includes("not available") || msg.includes("permission"));
+}
+
+function parseToolArgs(raw: unknown): Record<string, unknown> {
+  if (raw && typeof raw === "object") return raw as Record<string, unknown>;
+  if (typeof raw !== "string" || !raw.trim()) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
   }
-  return false;
 }
 
 // ── Adapter interface ──────────────────────────────────────────────────────
@@ -104,23 +123,25 @@ export class LLMAdapterFactory {
 
 // ── Module-level state ─────────────────────────────────────────────────────
 
-let activeProvider: LLMProvider = "gemini";
+let activeProvider: LLMProvider = "openrouter";
 let geminiKey = "";
 let geminiModel = "gemini-2.0-flash";
 let groqKey = "";
 let groqModel = "llama-3.3-70b-versatile";
 let claudeKey = "";
 let claudeModel = "claude-sonnet-4-6";
+let openrouterKey = "";
+let openrouterModel = "openrouter/free";
 
 export function setActiveProvider(p: LLMProvider) { activeProvider = p; }
-export function getActiveProvider(): LLMProvider { return activeProvider; }
 export function setGeminiKey(k: string) { geminiKey = k; }
-export function getGeminiKey(): string { return geminiKey; }
 export function setGeminiModel(m: string) { geminiModel = m; }
 export function setGroqKey(k: string) { groqKey = k; }
 export function setGroqModel(m: string) { groqModel = m; }
 export function setClaudeKey(k: string) { claudeKey = k; }
 export function setClaudeModel(m: string) { claudeModel = m; }
+export function setOpenRouterKey(k: string) { openrouterKey = k; }
+export function setOpenRouterModel(m: string) { openrouterModel = m; }
 
 // ── Public facade ──────────────────────────────────────────────────────────
 
@@ -184,8 +205,8 @@ class GeminiAdapter implements LLMAdapter {
     }
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiKey}`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+      `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`,
+      { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": geminiKey }, body: JSON.stringify(body) },
     );
 
     if (!response.ok) {
@@ -236,8 +257,8 @@ class GeminiAdapter implements LLMAdapter {
     }
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiKey}`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+      `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`,
+      { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": geminiKey }, body: JSON.stringify(body) },
     );
 
     if (!response.ok) {
@@ -264,7 +285,7 @@ class GeminiAdapter implements LLMAdapter {
   }
 }
 
-// ── Groq adapter (OpenAI-compatible) ──────────────────────────────────────
+// ── OpenAI-compatible adapters (Groq, OpenRouter) ─────────────────────────
 
 function toOpenAITool(tool: ToolDefinition): object {
   const properties: Record<string, unknown> = {};
@@ -283,57 +304,76 @@ function toOpenAITool(tool: ToolDefinition): object {
   };
 }
 
-class GroqAdapter implements LLMAdapter {
-  async chat(messages: LLMMessage[], _jsonSchema?: object, jsonSchemaDescription?: string): Promise<string> {
-    if (!groqKey) throw new LLMAuthError("Groq");
+type OpenAICompatConfig = {
+  provider: string;
+  url: string;
+  getKey: () => string;
+  getModel: () => string;
+  extraHeaders?: Record<string, string>;
+  /** Free-tier Llama models sometimes emit tool calls as inline text; this suppresses it. */
+  toolDiscipline?: boolean;
+  /** Providers that reliably support response_format: json_object. */
+  jsonMode?: boolean;
+};
 
-    const finalMessages = jsonSchemaDescription
-      ? messages.map(m =>
-          m.role === "system"
-            ? { ...m, content: `${m.content}\n\nYou MUST respond with valid JSON matching this schema:\n${jsonSchemaDescription}` }
-            : m,
-        )
-      : messages;
+// Llama models sometimes emit tool calls as inline <function=name> text.
+// An explicit system-level instruction suppresses this behaviour.
+const TOOL_DISCIPLINE =
+  "\n\nIMPORTANT: You have access to tools. When you need to call a tool you MUST use the structured tool_calls mechanism — never write function calls as raw text in your response. Do NOT output any inline function-call syntax such as <function=name>, <function(name)>, or similar patterns in your message content. All tool invocations must go through the tool_calls API field only.";
 
-    const body: Record<string, unknown> = {
-      model: groqModel,
-      messages: finalMessages,
-      temperature: 0.2,
-    };
+class OpenAICompatAdapter implements LLMAdapter {
+  constructor(private readonly cfg: OpenAICompatConfig) {}
 
-    if (jsonSchemaDescription) {
-      body.response_format = { type: "json_object" };
-    }
+  private async post(body: Record<string, unknown>): Promise<any> {
+    const key = this.cfg.getKey();
+    if (!key) throw new LLMAuthError(this.cfg.provider);
+    const model = this.cfg.getModel();
 
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    const response = await fetch(this.cfg.url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${groqKey}`,
+        Authorization: `Bearer ${key}`,
+        ...this.cfg.extraHeaders,
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ model, temperature: 0.2, ...body }),
     });
 
     if (!response.ok) {
-      throwOnApiError(response.status, await response.text(), "Groq", groqModel);
+      throwOnApiError(response.status, await response.text(), this.cfg.provider, model);
     }
 
     const data = await response.json();
+    // OpenRouter reports upstream failures (rate limit, provider down) as 200 + error body
+    if (data?.error && !data?.choices) {
+      const code = Number(data.error.code);
+      if (code === 429) throw new LLMQuotaError(this.cfg.provider);
+      throw new Error(`${this.cfg.provider}: ${data.error.message ?? "upstream error"}`);
+    }
+    return data;
+  }
+
+  async chat(messages: LLMMessage[], _jsonSchema?: object, jsonSchemaDescription?: string): Promise<string> {
+    const finalMessages = (jsonSchemaDescription
+      ? messages.map(m =>
+          m.role === "system"
+            ? { ...m, content: `${m.content}\n\nYou MUST respond with valid JSON only (no markdown fences, no commentary) matching this schema:\n${jsonSchemaDescription}` }
+            : m,
+        )
+      : messages
+    ).map(m => ({ role: m.role, content: m.content }));
+
+    const body: Record<string, unknown> = { messages: finalMessages };
+    if (jsonSchemaDescription && this.cfg.jsonMode) {
+      body.response_format = { type: "json_object" };
+    }
+
+    const data = await this.post(body);
     return data.choices?.[0]?.message?.content ?? "";
   }
 
-  async chatWithTools(
-    messages: LLMMessage[],
-    tools: ToolDefinition[],
-  ): Promise<LLMResponse> {
-    if (!groqKey) throw new LLMAuthError("Groq");
-
-    // Llama models sometimes emit tool calls as inline <function=name> text.
-    // An explicit system-level instruction suppresses this behaviour.
-    const TOOL_DISCIPLINE =
-      "\n\nIMPORTANT: You have access to tools. When you need to call a tool you MUST use the structured tool_calls mechanism — never write function calls as raw text in your response. Do NOT output any inline function-call syntax such as <function=name>, <function(name)>, or similar patterns in your message content. All tool invocations must go through the tool_calls API field only.";
-
-    // Groq/OpenAI: tool results are individual messages, so flatten them
+  async chatWithTools(messages: LLMMessage[], tools: ToolDefinition[]): Promise<LLMResponse> {
+    // OpenAI format: tool results are individual messages, so flatten them
     const finalMessages: object[] = [];
     for (const m of messages) {
       if (m.toolCalls && m.toolCalls.length > 0) {
@@ -347,46 +387,30 @@ class GroqAdapter implements LLMAdapter {
           })),
         });
       } else if (m.toolResults && m.toolResults.length > 0) {
-        // Each tool result must be its own message in OpenAI format
         for (const r of m.toolResults) {
           finalMessages.push({ role: "tool", tool_call_id: r.toolCallId, content: r.output });
         }
-      } else if (m.role === "system") {
-        finalMessages.push({ ...m, content: m.content + TOOL_DISCIPLINE });
+      } else if (m.role === "system" && this.cfg.toolDiscipline) {
+        finalMessages.push({ role: "system", content: m.content + TOOL_DISCIPLINE });
       } else {
-        finalMessages.push(m);
+        finalMessages.push({ role: m.role, content: m.content });
       }
     }
 
-    const body = {
-      model: groqModel,
+    const data = await this.post({
       messages: finalMessages,
       tools: tools.map(toOpenAITool),
       tool_choice: "auto",
-      temperature: 0.2,
-    };
-
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${groqKey}` },
-      body: JSON.stringify(body),
     });
-
-    if (!response.ok) {
-      throwOnApiError(response.status, await response.text(), "Groq", groqModel);
-    }
-
-    const data = await response.json();
-    const choice = data.choices?.[0];
-    const msg = choice?.message;
+    const msg = data.choices?.[0]?.message;
 
     if (msg?.tool_calls && msg.tool_calls.length > 0) {
       return {
         type: "tool_calls",
-        toolCalls: msg.tool_calls.map((tc: { id: string; function: { name: string; arguments: string } }) => ({
-          id: tc.id,
+        toolCalls: msg.tool_calls.map((tc: { id?: string; function: { name: string; arguments: unknown } }, i: number) => ({
+          id: tc.id ?? `tc-${Date.now()}-${i}`,
           name: tc.function.name,
-          args: JSON.parse(tc.function.arguments ?? "{}"),
+          args: parseToolArgs(tc.function.arguments),
         })),
       };
     }
@@ -539,5 +563,20 @@ class ClaudeAdapter implements LLMAdapter {
 // ── Register all adapters ──────────────────────────────────────────────────
 
 LLMAdapterFactory.register("gemini", new GeminiAdapter());
-LLMAdapterFactory.register("groq", new GroqAdapter());
+LLMAdapterFactory.register("groq", new OpenAICompatAdapter({
+  provider: "Groq",
+  url: "https://api.groq.com/openai/v1/chat/completions",
+  getKey: () => groqKey,
+  getModel: () => groqModel,
+  toolDiscipline: true,
+  jsonMode: true,
+}));
+LLMAdapterFactory.register("openrouter", new OpenAICompatAdapter({
+  provider: "OpenRouter",
+  url: "https://openrouter.ai/api/v1/chat/completions",
+  getKey: () => openrouterKey,
+  getModel: () => openrouterModel,
+  extraHeaders: { "HTTP-Referer": "https://github.com/oneplusiota/memory-ai", "X-Title": "memory.ai" },
+  toolDiscipline: true,
+}));
 LLMAdapterFactory.register("claude", new ClaudeAdapter());

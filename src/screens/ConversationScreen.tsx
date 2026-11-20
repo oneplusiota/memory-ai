@@ -15,12 +15,12 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import type { StackNavigationProp } from '@react-navigation/stack';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import * as SecureStore from 'expo-secure-store';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ChatBubble } from '@/components/ChatBubble';
 import { useConversation } from '@/hooks/useConversation';
 import type { RootStackParamList } from '@/navigation/AppNavigator';
-import type { ConversationMode, STTMode } from '@/types';
+import type { ConversationMode } from '@/types';
 
 const MODES: { id: ConversationMode; label: string }[] = [
   { id: 'journal', label: 'Journal' },
@@ -32,16 +32,14 @@ const MODES: { id: ConversationMode; label: string }[] = [
 
 type Nav = StackNavigationProp<RootStackParamList, 'Conversation'>;
 type Route = RouteProp<RootStackParamList, 'Conversation'>;
-const STT_MODE_KEY = 'stt_mode';
 
 export function ConversationScreen() {
   const navigation = useNavigation<Nav>();
+  const insets = useSafeAreaInsets();
   const route = useRoute<Route>();
-  const [sttMode, setSttMode] = useState<STTMode>('native');
   const flatListRef = useRef<FlatList>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const keyboardHeight = useRef(new Animated.Value(0)).current;
-  const isSubmittingRef = useRef(false);
 
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', (e) => {
@@ -57,19 +55,13 @@ export function ConversationScreen() {
     return () => { show.remove(); hide.remove(); };
   }, [keyboardHeight]);
 
-  useEffect(() => {
-    SecureStore.getItemAsync(STT_MODE_KEY).then((v) => {
-      if (v) setSttMode(v as STTMode);
-    });
-  }, []);
-
   const {
     messages, transcript, isRecording, isSending, error,
     lastSuggestSave, conversationMode, setConversationMode,
     toolSteps, pendingConfirm, confirmToolWrite,
     handleTranscriptChange, toggleRecording,
     sendMessage, saveToVault, loadConversation, persistConversation, clearConversation,
-  } = useConversation(sttMode, route.params?.initialMode as ConversationMode | undefined);
+  } = useConversation(route.params?.initialMode as ConversationMode | undefined);
 
   // Load a past conversation when vaultUri becomes available (loadConversation
   // changes reference only when vaultUri changes, so this retries until ready)
@@ -108,15 +100,9 @@ export function ConversationScreen() {
     return unsub;
   }, [navigation, persistConversation]);
 
-  const handleSend = async () => {
-    const text = transcript.trim();
-    if (!text || isSending || isSubmittingRef.current) return;
-    isSubmittingRef.current = true;
-    try {
-      await sendMessage(text);
-    } finally {
-      isSubmittingRef.current = false;
-    }
+  const handleSend = () => {
+    if (!transcript.trim() || isSending) return;
+    sendMessage();
   };
 
   const handleSaveToVault = async () => {
@@ -135,7 +121,7 @@ export function ConversationScreen() {
   return (
     <Animated.View style={[styles.container, { paddingBottom: keyboardHeight }]}>
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <Text style={styles.headerTitle}>memory.ai</Text>
         <View style={styles.headerRight}>
           {messages.length > 0 && (
@@ -202,7 +188,7 @@ export function ConversationScreen() {
           <View style={styles.emptyContainer}>
             <MaterialCommunityIcons name="microphone-outline" size={48} color="#D1D5DB" />
             <Text style={styles.emptyText}>Tap the mic to start speaking</Text>
-            <Text style={styles.emptySubText}>Or type a message below</Text>
+            <Text style={styles.emptySubText}>Tap it again to stop, then send</Text>
           </View>
         }
       />
@@ -247,54 +233,53 @@ export function ConversationScreen() {
         </View>
       )}
 
-      {/* Input bar — buttons live inside the rounded input box */}
-      <View style={styles.inputBar}>
+      {/* Input bar — big mic button for one-thumb capture */}
+      <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
         <View style={styles.inputWrapper}>
-          {/* Left: mic (idle) or stop (recording) */}
-          <Pressable
-            onPress={isSending ? undefined : toggleRecording}
-            style={styles.innerBtn}
-            disabled={isSending}
-          >
-            {isRecording ? (
-              <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-                <MaterialCommunityIcons name="stop-circle" size={22} color="#EF4444" />
-              </Animated.View>
-            ) : (
-              <MaterialCommunityIcons
-                name="microphone"
-                size={22}
-                color={isSending ? '#D1D5DB' : '#6D28D9'}
-              />
-            )}
-          </Pressable>
-
-          {/* Center: text input */}
           <TextInput
             style={styles.input}
             value={transcript}
             onChangeText={handleTranscriptChange}
-            placeholder={isRecording ? 'Listening…' : 'Ask anything or share a thought…'}
+            placeholder={isRecording ? 'Listening…' : 'Tap the mic and talk, or type here…'}
             placeholderTextColor="#9CA3AF"
             multiline
             editable={!isSending}
-            onSubmitEditing={handleSend}
             onBlur={() => Animated.timing(keyboardHeight, { toValue: 0, duration: 150, useNativeDriver: false }).start()}
           />
-
-          {/* Right: send or spinner — only when there's text */}
           {isSending ? (
-            <View style={styles.innerBtn}>
+            <View style={styles.sendBtn}>
               <ActivityIndicator size={18} color="#6D28D9" />
             </View>
           ) : hasText ? (
-            <Pressable onPress={handleSend} style={styles.innerBtn}>
+            <Pressable onPress={handleSend} style={styles.sendBtn} hitSlop={8}>
               <View style={styles.sendCircle}>
-                <MaterialCommunityIcons name="arrow-up" size={16} color="#FFFFFF" />
+                <MaterialCommunityIcons name="arrow-up" size={18} color="#FFFFFF" />
               </View>
             </Pressable>
           ) : null}
         </View>
+
+        <Pressable
+          onPress={toggleRecording}
+          disabled={isSending}
+          hitSlop={10}
+          style={({ pressed }) => [
+            styles.micBtn,
+            isRecording && styles.micBtnActive,
+            isSending && styles.micBtnDisabled,
+            pressed && { opacity: 0.85 },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel={isRecording ? 'Stop recording' : 'Start recording'}
+        >
+          <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+            <MaterialCommunityIcons
+              name={isRecording ? 'stop' : 'microphone'}
+              size={30}
+              color="#FFFFFF"
+            />
+          </Animated.View>
+        </Pressable>
       </View>
     </Animated.View>
   );
@@ -328,7 +313,7 @@ const styles = StyleSheet.create({
 
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingTop: 56, paddingBottom: 12,
+    paddingHorizontal: 16, paddingBottom: 12,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#E5E7EB',
   },
@@ -379,45 +364,53 @@ const styles = StyleSheet.create({
   errorText: { color: '#991B1B', fontSize: 13 },
 
   inputBar: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 10,
     paddingHorizontal: 12,
-    paddingVertical: 10,
-    paddingBottom: 14,
+    paddingTop: 10,
     backgroundColor: '#FFFFFF',
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: '#E5E7EB',
   },
   inputWrapper: {
+    flex: 1,
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     backgroundColor: '#F3F4F6',
     borderRadius: 26,
-    paddingHorizontal: 6,
+    paddingLeft: 16,
+    paddingRight: 6,
     paddingVertical: 6,
-    minHeight: 46,
-    maxHeight: 130,
-    gap: 2,
-  },
-  innerBtn: {
-    width: 34,
-    height: 34,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
+    minHeight: 56,
+    maxHeight: 140,
   },
   input: {
     flex: 1,
-    fontSize: 15,
+    fontSize: 16,
     color: '#111827',
-    paddingTop: 4,
-    paddingBottom: 4,
-    maxHeight: 100,
+    paddingTop: 8,
+    paddingBottom: 8,
+    maxHeight: 120,
   },
+  sendBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   sendCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: '#6D28D9',
     alignItems: 'center',
     justifyContent: 'center',
   },
+  micBtn: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#6D28D9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 4,
+  },
+  micBtnActive: { backgroundColor: '#DC2626' },
+  micBtnDisabled: { opacity: 0.4 },
 });
