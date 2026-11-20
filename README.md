@@ -1,6 +1,6 @@
 # memory.ai
 
-> A quick-capture, voice-first note-taking app for Android. Tap the mic, talk, and the AI files your thoughts into your Obsidian vault as structured, Dataview-queryable notes. Tuned for the OnePlus 15.
+> A quick-capture, voice-first notes app for Android. Tap the mic, talk, tap again — it's saved and instantly searchable, entirely on your phone. Tuned for the OnePlus 15.
 
 Built for Android as a native APK using React Native + Expo bare workflow.
 
@@ -11,14 +11,12 @@ Built for Android as a native APK using React Native + Expo bare workflow.
 - [Install](#install-no-build-required)
 - [Features](#features)
 - [LLM Providers](#llm-providers)
-- [AI Tools](#ai-tools)
+- [Assistant tools](#assistant-tools)
 - [Voice input](#voice-input)
 - [Architecture](#architecture)
-- [Vault Structure](#vault-structure)
 - [Tech Stack](#tech-stack)
 - [Getting API Keys](#getting-api-keys)
 - [Setup & Build](#setup--build)
-- [Note Schema Reference](#note-schema-reference)
 - [Releasing a New APK](#releasing-a-new-apk)
 
 ---
@@ -30,19 +28,17 @@ Built for Android as a native APK using React Native + Expo bare workflow.
 1. Go to the [**Releases page**](https://github.com/oneplusiota/memory-ai/releases) and download the latest `memory-ai-vX.X.X.apk`
 2. On your Android phone: **Settings → Apps → Special app access → Install unknown apps** → allow your browser or Files app
 3. Open the downloaded APK and tap **Install**
-4. Launch **memory.ai** → **Settings (⚙️)** → enter your API key (OpenRouter's free models need no card) → pick your Obsidian vault folder
+4. Launch **memory.ai**. Capture works immediately. For the Ask chat, open **Settings (⚙️)** and enter an API key (OpenRouter's free models need no card)
 
 ---
 
 ## Features
 
-- 🎙️ **Tap-to-record** — big thumb-reach mic button, live editable transcript, continuous Android STT that restarts on silence and falls back to on-device recognition offline
-- 🧠 **AI assistant** — chat with an assistant that can search your notes and answer from them
-- 🤖 **Tool calling** — the AI can search your vault, read, create and update notes (writes ask for confirmation)
-- 📂 **Obsidian-compatible vault** — `daily/` and `atoms/` notes with Dataview-friendly frontmatter
-- 🔍 **Local search** — on-device keyword search over your index, no API calls for indexing
-- 🔄 **Multi-provider LLM** — OpenRouter (free models), Gemini, Groq, or Claude
-- ✏️ **Edit while speaking** — fix words in real-time before sending
+- 🎙️ **One-tap capture** — tap the mic, talk, tap again: the entry is saved. Continuous Android speech recognition that restarts on silence and falls back to on-device recognition offline
+- 🔍 **Instant full-text search** — SQLite FTS5 over every entry: stemming, prefix matching and BM25 ranking, fully on-device
+- 💬 **Ask your entries** — chat with an assistant that searches your entries to answer (works with free OpenRouter models)
+- 📥 **Import from Obsidian** — one-time import of an existing vault, one entry per note
+- 🔒 **Local-first** — everything lives in a SQLite database on the phone
 
 ---
 
@@ -52,7 +48,7 @@ Providers are adapters behind one factory (`LLMAdapterFactory`). Four are built 
 
 ### OpenRouter (default) — free models
 
-One key gives access to the free model pool. Pick **Free Models Router** (`openrouter/free`, auto-selects an available free model), one of the listed `:free` models, or choose **Custom model…** and paste any model id from [openrouter.ai/models](https://openrouter.ai/models?max_price=0). The free catalogue rotates often, so a model id that stops working just needs swapping. Agentic vault tools need a model with tool-calling support; the listed models have it.
+One key gives access to the free model pool. Pick **Free Models Router** (`openrouter/free`, auto-selects an available free model), one of the listed `:free` models, or choose **Custom model…** and paste any model id from [openrouter.ai/models](https://openrouter.ai/models?max_price=0). The free catalogue rotates often, so a model id that stops working just needs swapping. The Ask chat needs a model with tool-calling support; the listed models have it.
 
 ### Gemini (Google AI Studio)
 
@@ -70,18 +66,14 @@ Haiku 4.5, Sonnet 4.6, Opus 4.8 — pay-per-use.
 
 ---
 
-## AI Tools
+## Assistant tools
 
-When a vault is connected, the AI can call tools during a conversation:
+The assistant is read-only; entries are only created by capturing.
 
 | Tool | Description |
 |---|---|
-| `search_vault` | Keyword search across your notes |
-| `read_note` | Read a specific note by path |
-| `create_note` | Create a new note (asks for confirmation) |
-| `update_note` | Append to an existing note (asks for confirmation) |
-| `append_daily_note` | Add a log entry to today's daily note |
-| `list_notes` | List notes filtered by type or tag |
+| `search_entries` | Full-text search over your entries |
+| `recent_entries` | Most recent entries, newest first |
 | `get_date_time` | Current date and time |
 
 ---
@@ -102,42 +94,15 @@ If voice does nothing, make sure **Google** ("Speech Recognition & Synthesis Ser
 ## Architecture
 
 ```
-Voice Input (Android STT)
+Mic (Android STT) or keyboard
         ↓
-Live Editable Transcript
+EntryDB (SQLite: entries + FTS5 index, triggers keep it in sync)
         ↓
-Send Message
+Home: list · search · edit · delete
         ↓
-AgentClient — tool-calling loop
-  ├── search_vault  → keyword search over the local index
-  ├── read_note     → VaultScanner + MarkdownParser
-  └── create/update → VaultWriter (confirm before write)
+Ask: AgentClient tool loop → search_entries / recent_entries
         ↓
-LLMClient (provider-agnostic façade)
-  └── LLMAdapterFactory
-        ├── GeminiAdapter      (generativelanguage.googleapis.com)
-        ├── OpenAICompat       (Groq + OpenRouter)
-        └── ClaudeAdapter      (api.anthropic.com)
-        ↓
-AI Response displayed in chat
-```
-
----
-
-## Vault Structure
-
-```
-vault/
-├── daily/
-│   └── 2026-05-28.md          # One per day, ISO week in frontmatter
-└── atoms/
-    ├── James-Smith.md          # type: person, area: work, status: active
-    └── Q3-Roadmap.md           # type: project, status: active
-```
-
-**Dataview queries this enables:**
-```dataview
-TABLE type, area, status FROM "atoms" WHERE status = "active"
+LLMClient → OpenRouter · Gemini · Groq · Claude adapters
 ```
 
 ---
@@ -152,7 +117,7 @@ TABLE type, area, status FROM "atoms" WHERE status = "active"
 | Voice STT | `expo-speech-recognition` (Android native, continuous) |
 | LLM | `LLMAdapterFactory` — OpenRouter, Gemini, Groq, Claude adapters |
 | Agent loop | Custom `AgentClient` with tool-calling |
-| Local search | SQLite index + keyword scoring |
+| Storage & search | `expo-sqlite` with FTS5 (porter stemming, BM25) |
 | UI | React Native Paper + React Native Reanimated |
 | Navigation | React Navigation stack |
 | Storage | `expo-secure-store` for API keys & settings |
@@ -224,56 +189,9 @@ npx expo run:android --device
 
 ### 4. First launch
 
-1. Open **Settings** (⚙️ icon)
-2. Choose your **LLM Provider** (OpenRouter is the default) and enter your API key
-3. Select a **model** (free models are listed first)
-4. Tap **Pick Vault Folder** → select your Obsidian vault
-5. Wait for indexing to complete
-6. Start talking 🎙️
-
----
-
-## Note Schema Reference
-
-### Atom note (`atoms/Note-Name.md`)
-```yaml
----
-title: James Smith
-type: person          # person | project | concept | decision | area | tool
-area: work            # work | personal | health | finance | learning | other
-status: active        # active | dormant | archived
-tags: [engineering]
-date: 2026-05-28
-updated: 2026-05-28
-aliases: [James]
----
-```
-
-### Daily note (`daily/YYYY-MM-DD.md`)
-```yaml
----
-title: 2026-05-28
-type: daily
-date: 2026-05-28
-week: "2026-W22"
-tags: [daily]
----
-
-## 09:30
-Had 1:1 with [[James Smith]]. Updated [[Q3-Roadmap]].
-- [ ] Follow up on deadline
-```
-
----
-title: "Had a 1:1 with James"
-type: conversation
-date: 2026-05-28
-time: 09:30
-topics: ["[[James Smith]]", "[[Q3-Roadmap]]"]
-saved_to_vault: true
-tags: [conversation]
----
-```
+1. Tap the mic and say something, then tap again — it's saved. No setup needed
+2. To use **Ask** (💬), open **Settings** (⚙️), pick an **LLM Provider** (OpenRouter is the default) and enter an API key
+3. Optional: **Settings → Import from Obsidian vault** brings in existing notes, one entry per note
 
 ---
 

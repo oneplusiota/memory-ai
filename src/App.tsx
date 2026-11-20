@@ -6,7 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { AppNavigator } from '@/navigation/AppNavigator';
 import { loadAllProviderConfig } from '@/services/llm/ProviderConfig';
-import { openVaultDB } from '@/services/db/VaultDB';
+import { openEntryDB } from '@/services/db/EntryDB';
 
 const theme = {
   ...MD3LightTheme,
@@ -22,7 +22,7 @@ const theme = {
 export default function App() {
   useEffect(() => {
     loadAllProviderConfig();
-    openVaultDB();
+    openEntryDB().catch(() => {});
   }, []);
 
   return (

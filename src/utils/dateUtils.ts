@@ -1,7 +1,3 @@
-export function getDailyNotePath(): string {
-  return `daily/${getTodayDateString()}.md`;
-}
-
 /** YYYY-MM-DD in the device's local time zone (toISOString would give the UTC date). */
 export function formatLocalDate(d: Date): string {
   const mm = String(d.getMonth() + 1).padStart(2, '0');
@@ -9,32 +5,23 @@ export function formatLocalDate(d: Date): string {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
-export function getTodayDateString(): string {
-  return formatLocalDate(new Date());
+export function formatLocalTime(d: Date): string {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-export function getTimeHeading(): string {
-  return new Date().toTimeString().slice(0, 5); // HH:MM
-}
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-export function getISOWeek(date: Date): string {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const week = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-  return `${d.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
-}
-
-function ordinalSuffix(n: number): string {
-  const s = ['th', 'st', 'nd', 'rd'];
-  const v = n % 100;
-  return n + (s[(v - 20) % 10] ?? s[v] ?? s[0]);
-}
-
-export function getReadableDailyTitle(): string {
-  const d = new Date();
-  const weekday = d.toLocaleDateString('en-GB', { weekday: 'long' });
-  const day = ordinalSuffix(d.getDate());
-  const month = d.toLocaleDateString('en-GB', { month: 'long' });
-  return `${weekday} - ${day} ${month} ${d.getFullYear()}`;
+/** "14:05" today, "Yesterday 14:05", "12 Nov 14:05", or "12 Nov 2025" for other years. */
+export function formatEntryTime(ts: number, now: number = Date.now()): string {
+  const d = new Date(ts);
+  const today = new Date(now);
+  const time = formatLocalTime(d);
+  const dayDiff = Math.round(
+    (new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime() -
+      new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()) / 86400000,
+  );
+  if (dayDiff === 0) return time;
+  if (dayDiff === 1) return `Yesterday ${time}`;
+  const day = `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  return d.getFullYear() === today.getFullYear() ? `${day} ${time}` : `${day} ${d.getFullYear()}`;
 }

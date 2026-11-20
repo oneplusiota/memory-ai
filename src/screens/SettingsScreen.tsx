@@ -3,13 +3,9 @@ import { Animated, Keyboard, Modal, ScrollView, StyleSheet, TouchableOpacity, Vi
 import { Button, Snackbar, Text, TextInput } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
-import { useVault } from '@/hooks/useVault';
-import { clearNotes, getNoteCount, upsertNote, upsertLinks } from '@/services/db/VaultDB';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
-import { scanVaultForMarkdown } from '@/services/vault/VaultScanner';
-import { parseNote } from '@/services/vault/MarkdownParser';
-import { extractDensestParagraph } from '@/utils/textUtils';
-import { noteTitle } from '@/utils/pathUtils';
+import { countEntries } from '@/services/db/EntryDB';
+import { importVault } from '@/services/import/VaultImport';
 import {
   saveGeminiKey, saveGroqKey, saveClaudeKey, saveOpenRouterKey, saveActiveProvider,
   saveGeminiModelPref, saveGroqModelPref, saveClaudeModelPref, saveOpenRouterModelPref, loadStoredKeys,
@@ -192,9 +188,8 @@ function KeyModal({
 }
 
 export function SettingsScreen() {
-  const { vaultUri, pickVault, clearVault } = useVault();
-  const [indexing, setIndexing] = useState(false);
-  const [noteCount, setNoteCount] = useState(0);
+  const [importing, setImporting] = useState('');
+  const [entryCount, setEntryCount] = useState(0);
   const [snack, setSnack] = useState('');
 
   // LLM state
@@ -225,10 +220,7 @@ export function SettingsScreen() {
       setGroqModelState(stored.groqModel);
       setClaudeModelState(stored.claudeModel);
 
-      // Load note count from SQLite
-      const count = await getNoteCount();
-      setNoteCount(count);
-
+      setEntryCount(await countEntries());
     })();
   }, []);
 
@@ -320,47 +312,25 @@ export function SettingsScreen() {
   const claudeModelLabel = CLAUDE_MODELS.find(m => m.value === claudeModel)?.label ?? claudeModel;
   const providerLabel = LLM_PROVIDERS.find(p => p.value === activeProvider)?.label ?? activeProvider;
 
-  const rebuildIndex = useCallback(async (uri: string) => {
-    setIndexing(true);
-    await clearNotes();
+  const handleImport = useCallback(async () => {
+    if (importing) return;
     try {
-      const files = await scanVaultForMarkdown(uri);
-      setNoteCount(files.length);
-      for (const file of files) {
-        const content = await StorageAccessFramework.readAsStringAsync(file.uri);
-        const parsed = parseNote(content, noteTitle(file.relativePath));
-        await upsertNote({
-          id: file.relativePath,
-          title: parsed.title,
-          tags: parsed.tags,
-          aliases: parsed.aliases,
-          summary: extractDensestParagraph(parsed.body),
-          outlinks: parsed.outlinks,
-          type: parsed.type,
-          area: parsed.area,
-          status: parsed.status,
-          lastModified: Date.now(),
-        });
-        await upsertLinks(file.relativePath, parsed.outlinks);
-      }
-      setSnack(`Indexed ${files.length} notes.`);
+      const perm = await StorageAccessFramework.requestDirectoryPermissionsAsync();
+      if (!perm.granted) return;
+      setImporting('Reading vault…');
+      const res = await importVault(perm.directoryUri, (done, total) => setImporting(`Importing ${done}/${total}…`));
+      setEntryCount(await countEntries());
+      setSnack(
+        `Imported ${res.imported} notes` +
+        (res.skipped ? `, ${res.skipped} skipped` : '') +
+        (res.failed ? `, ${res.failed} failed` : '') + '.',
+      );
     } catch (e: any) {
-      setSnack(`Indexing failed: ${e.message}`);
+      setSnack(`Import failed: ${e?.message ?? 'unknown error'}`);
     } finally {
-      setIndexing(false);
+      setImporting('');
     }
-  }, []);
-
-  const handlePickVault = useCallback(async () => {
-    try {
-      const uri = await pickVault();
-      if (!uri) return;           // dismissed — do nothing silently
-      setSnack('Vault connected! Building index…');
-      await rebuildIndex(uri);
-    } catch (e: any) {
-      setSnack(`Could not open vault: ${e?.message ?? 'Unknown error'}`);
-    }
-  }, [pickVault, rebuildIndex]);
+  }, [importing]);
 
   return (
     <View style={styles.root}>
@@ -446,18 +416,21 @@ export function SettingsScreen() {
 
         <Divider />
 
-        {/* ── VAULT ── */}
-        <SectionHeader title="VAULT" />
+        {/* ── DATA ── */}
+        <SectionHeader title="DATA" />
         <View style={styles.card}>
           <SettingRow
-            icon="folder-outline"
-            label="Vault"
-            value={
-              !vaultUri ? 'Not connected' :
-              noteCount === 0 ? 'Connected · not indexed' :
-              `${noteCount} notes`
-            }
-            onPress={() => setOpenModal('vault')}
+            icon="note-multiple-outline"
+            label="Entries"
+            value={`${entryCount} saved on this device`}
+            onPress={() => {}}
+          />
+          <View style={styles.cardDivider} />
+          <SettingRow
+            icon="folder-download-outline"
+            label="Import from Obsidian vault"
+            value={importing || 'One-time: each note becomes an entry'}
+            onPress={handleImport}
           />
         </View>
 
@@ -553,104 +526,6 @@ export function SettingsScreen() {
         onSave={handleSaveClaudeKey}
         onClose={() => setOpenModal(null)}
       />
-      {/* ── Vault modal ── */}
-      <Modal visible={openModal === 'vault'} transparent animationType="slide" onRequestClose={() => setOpenModal(null)}>
-        <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setOpenModal(null)} />
-        <View style={styles.modalSheet}>
-          <View style={styles.modalHandle} />
-          <Text style={styles.modalTitle}>Vault</Text>
-
-          {vaultUri ? (
-            <>
-              {/* Re-index */}
-              <TouchableOpacity
-                style={styles.vaultActionRow}
-                activeOpacity={indexing ? 1 : 0.7}
-                onPress={() => { if (!indexing) { setOpenModal(null); rebuildIndex(vaultUri); } }}
-              >
-                <View style={styles.vaultActionIcon}>
-                  <MaterialCommunityIcons name="folder-refresh-outline" size={20} color="#6D28D9" />
-                </View>
-                <View style={styles.vaultActionText}>
-                  <Text style={styles.vaultActionLabel}>Re-index Vault</Text>
-                  <Text style={styles.vaultActionDesc}>
-                    {indexing
-                      ? 'Indexing…'
-                      : noteCount > 0
-                        ? `${noteCount} notes indexed`
-                        : 'Scan the vault and rebuild the index'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-
-              <View style={styles.vaultActionDivider} />
-
-              {/* Connect new */}
-              <TouchableOpacity
-                style={styles.vaultActionRow}
-                activeOpacity={0.7}
-                onPress={() => {
-                  setOpenModal(null);
-                  handlePickVault();
-                }}
-              >
-                <View style={styles.vaultActionIcon}>
-                  <MaterialCommunityIcons name="folder-open-outline" size={20} color="#6D28D9" />
-                </View>
-                <View style={styles.vaultActionText}>
-                  <Text style={styles.vaultActionLabel}>Change Vault Folder</Text>
-                  <Text style={styles.vaultActionDesc}>Pick a different folder</Text>
-                </View>
-              </TouchableOpacity>
-
-              <View style={styles.vaultActionDivider} />
-
-              {/* Disconnect */}
-              <TouchableOpacity
-                style={styles.vaultActionRow}
-                activeOpacity={0.7}
-                onPress={async () => {
-                  setOpenModal(null);
-                  await clearVault();
-                  await clearNotes();
-                  setNoteCount(0);
-                  setSnack('Vault disconnected.');
-                }}
-              >
-                <View style={[styles.vaultActionIcon, styles.vaultActionIconDanger]}>
-                  <MaterialCommunityIcons name="link-off" size={20} color="#EF4444" />
-                </View>
-                <View style={styles.vaultActionText}>
-                  <Text style={[styles.vaultActionLabel, styles.vaultActionLabelDanger]}>Disconnect Vault</Text>
-                  <Text style={styles.vaultActionDesc}>Remove vault connection</Text>
-                </View>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <TouchableOpacity
-              style={styles.vaultActionRow}
-              activeOpacity={0.7}
-              onPress={() => {
-                setOpenModal(null);
-                handlePickVault();
-              }}
-            >
-              <View style={styles.vaultActionIcon}>
-                <MaterialCommunityIcons name="folder-open-outline" size={20} color="#6D28D9" />
-              </View>
-              <View style={styles.vaultActionText}>
-                <Text style={styles.vaultActionLabel}>Connect Vault Folder</Text>
-                <Text style={styles.vaultActionDesc}>Pick your Obsidian vault folder</Text>
-              </View>
-            </TouchableOpacity>
-          )}
-
-          <TouchableOpacity style={styles.modalCancel} onPress={() => setOpenModal(null)}>
-            <Text style={styles.modalCancelText}>Cancel</Text>
-          </TouchableOpacity>
-        </View>
-      </Modal>
-
       <Snackbar visible={!!snack} onDismiss={() => setSnack('')} duration={3000}>
         {snack}
       </Snackbar>
@@ -735,17 +610,4 @@ const styles = StyleSheet.create({
   keyModalInput: { backgroundColor: '#FFFFFF', marginBottom: 16 },
   keyModalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8 },
   keyModalBtn: { minWidth: 80 },
-
-  // Vault modal action rows
-  vaultActionRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, gap: 14 },
-  vaultActionDivider: { height: StyleSheet.hairlineWidth, backgroundColor: '#F3F4F6' },
-  vaultActionIcon: {
-    width: 38, height: 38, borderRadius: 10,
-    backgroundColor: '#EDE9FE', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-  },
-  vaultActionIconDanger: { backgroundColor: '#FEE2E2' },
-  vaultActionText: { flex: 1 },
-  vaultActionLabel: { fontSize: 15, fontWeight: '500', color: '#111827' },
-  vaultActionLabelDanger: { color: '#EF4444' },
-  vaultActionDesc: { fontSize: 13, color: '#9CA3AF', marginTop: 2 },
 });
