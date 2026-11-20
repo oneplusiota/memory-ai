@@ -6,11 +6,9 @@ import type { ConversationMessage } from '@/types';
 
 type Props = {
   message: ConversationMessage;
-  suggestSave?: boolean;
-  onSave?: () => void;
 };
 
-export function ChatBubble({ message, suggestSave, onSave }: Props) {
+export function ChatBubble({ message }: Props) {
   const isUser = message.role === 'user';
 
   const handleCopy = async () => {
@@ -37,11 +35,6 @@ export function ChatBubble({ message, suggestSave, onSave }: Props) {
             </Text>
           </View>
         </TouchableOpacity>
-        {suggestSave && onSave && (
-          <TouchableOpacity style={styles.savePill} onPress={onSave}>
-            <Text style={styles.savePillText}>💾 Save to vault</Text>
-          </TouchableOpacity>
-        )}
       </View>
     </View>
   );
@@ -64,9 +57,4 @@ const styles = StyleSheet.create({
   text: { fontSize: 15, lineHeight: 22 },
   textUser: { color: '#FFFFFF' },
   textAI: { color: '#1A1A1A' },
-  savePill: {
-    alignSelf: 'flex-start', backgroundColor: '#EDE9FE',
-    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14,
-  },
-  savePillText: { color: '#6D28D9', fontSize: 13, fontWeight: '500' },
 });

@@ -5,11 +5,11 @@
  * calls, executes them via ToolExecutor and loops. Stops when the model
  * returns a text reply or the max iteration limit is reached.
  *
- * Write tools (create_note, update_note, create_event) pause the loop and
+ * Write tools (create_note, update_note) pause the loop and
  * surface a confirmation request to the caller via onConfirmRequired.
  */
 
-import type { AgentMode, ConversationMessage, ToolDefinition, ToolResult } from '@/types';
+import type { ConversationMessage, ToolDefinition, ToolResult } from '@/types';
 import type { LLMMessage } from '@/services/llm/LLMClient';
 import { llmChatWithTools } from '@/services/llm/LLMClient';
 import { executeTool } from './ToolExecutor';
@@ -41,8 +41,6 @@ export async function agentChat(
   systemPrompt: string,
   tools: ToolDefinition[],
   vaultUri: string,
-  customTools: ToolDefinition[],
-  mode: AgentMode,
   callbacks: AgentCallbacks = {},
 ): Promise<string> {
   const { onStep, onConfirmRequired } = callbacks;
@@ -69,18 +67,12 @@ export async function agentChat(
       return response.text;
     }
 
-    // Model wants to call tools
-    if (mode === 'single' && iterations > 1) {
-      // In single-call mode, stop after first round
-      return 'Tool results gathered. Please ask a follow-up question to continue.';
-    }
-
     pendingToolResults = [];
 
     for (const toolCall of response.toolCalls) {
       onStep?.({ type: 'tool_call', name: toolCall.name, args: toolCall.args });
 
-      const result = await executeTool(toolCall, vaultUri, customTools);
+      const result = await executeTool(toolCall, vaultUri);
 
       // Handle write confirmation
       if (result.needsConfirmation && result.pendingWrite) {

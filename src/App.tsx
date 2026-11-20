@@ -6,9 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { AppNavigator } from '@/navigation/AppNavigator';
 import { loadAllProviderConfig } from '@/services/llm/ProviderConfig';
-import { loadWebSearchConfig } from '@/services/tools/WebSearchClient';
 import { openVaultDB } from '@/services/db/VaultDB';
-import { isModelDownloaded, loadVocab } from '@/services/search/GloveService';
 
 const theme = {
   ...MD3LightTheme,
@@ -24,10 +22,7 @@ const theme = {
 export default function App() {
   useEffect(() => {
     loadAllProviderConfig();
-    loadWebSearchConfig();
     openVaultDB();
-    // Auto-load GloVe vocab at startup if the model file is already downloaded
-    isModelDownloaded().then(downloaded => { if (downloaded) loadVocab(); });
   }, []);
 
   return (

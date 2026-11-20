@@ -4,28 +4,12 @@ export type NoteNode = {
   tags: string[];
   aliases: string[];
   summary: string;
-  semanticSummary?: string;
   outlinks: string[];
   lastModified: number;
-  // Phase 2: on-device embedding vector (384-dim, null until embedded)
-  embedding?: number[];
   // Zettelkasten / Dataview fields (optional, only set on atom notes)
-  type?: string;    // person | project | concept | decision | area | tool | daily | conversation
+  type?: string;    // person | project | concept | decision | area | tool | daily
   area?: string;    // work | personal | health | finance | learning | other
   status?: string;  // active | dormant | archived
-};
-
-export type NoteWriteOp = {
-  action: 'create_atom' | 'update_atom';
-  path: string;
-  content: string;
-};
-
-export type RoutingDecision = {
-  notes: NoteWriteOp[];
-  daily_entry: string;
-  confidence: 'high' | 'medium' | 'low';
-  reasoning: string;
 };
 
 export type SearchResult = {
@@ -40,18 +24,7 @@ export type ConversationMessage = {
   timestamp: number;
 };
 
-export type ConversationResponse = {
-  reply: string;
-  suggest_save: boolean;
-};
-
 export type LLMProvider = 'gemini' | 'groq' | 'claude' | 'openrouter';
-
-export type ConversationMode = 'journal' | 'coach' | 'analyst' | 'devil' | 'tool_builder';
-
-export type AgentMode = 'agentic' | 'single';
-
-export type WebSearchProvider = 'tavily' | 'serper';
 
 // ── Tool system ────────────────────────────────────────────────────────────
 
@@ -66,14 +39,6 @@ export type ToolDefinition = {
   name: string;
   description: string;
   parameters: ToolParameterDef[];
-  /** 'builtin' = implemented in code; 'custom' = .tool.md prompt-based */
-  kind: 'builtin' | 'custom';
-  /** For custom tools: vault-relative path to the .tool.md file */
-  sourcePath?: string;
-  /** For custom tools: parsed prompt template body */
-  promptTemplate?: string;
-  /** Optional default output path in vault (custom tools only) */
-  outputPath?: string;
 };
 
 export type ToolCall = {

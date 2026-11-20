@@ -5,8 +5,7 @@
 
 import type { ToolDefinition, ToolResult } from '@/types';
 import { searchNotes } from '@/services/search/HybridSearch';
-import { getAllNotes, upsertNote, upsertLinks, setEmbedding } from '@/services/db/VaultDB';
-import { embed as gloveEmbed, isReady as gloveReady } from '@/services/search/GloveService';
+import { getAllNotes, upsertNote, upsertLinks } from '@/services/db/VaultDB';
 import { parseNote } from '@/services/vault/MarkdownParser';
 import { readNote, createNote, appendToNote, appendToDailyNote } from '@/services/vault/VaultWriter';
 import { extractDensestParagraph } from '@/utils/textUtils';
@@ -23,7 +22,6 @@ export const BUILTIN_TOOL_DEFINITIONS: ToolDefinition[] = [
       { name: 'query', description: 'The search query', type: 'string', required: true },
       { name: 'limit', description: 'Maximum number of results to return (default 5)', type: 'number', required: false },
     ],
-    kind: 'builtin',
   },
   {
     name: 'read_note',
@@ -31,7 +29,6 @@ export const BUILTIN_TOOL_DEFINITIONS: ToolDefinition[] = [
     parameters: [
       { name: 'path', description: 'Vault-relative path to the note, e.g. atoms/My-Note.md', type: 'string', required: true },
     ],
-    kind: 'builtin',
   },
   {
     name: 'list_notes',
@@ -41,7 +38,6 @@ export const BUILTIN_TOOL_DEFINITIONS: ToolDefinition[] = [
       { name: 'tag', description: 'Filter by tag', type: 'string', required: false },
       { name: 'limit', description: 'Maximum number of results (default 20)', type: 'number', required: false },
     ],
-    kind: 'builtin',
   },
   {
     name: 'create_note',
@@ -50,7 +46,6 @@ export const BUILTIN_TOOL_DEFINITIONS: ToolDefinition[] = [
       { name: 'path', description: 'Vault-relative path, e.g. atoms/My-New-Note.md', type: 'string', required: true },
       { name: 'content', description: 'Full markdown content including frontmatter', type: 'string', required: true },
     ],
-    kind: 'builtin',
   },
   {
     name: 'update_note',
@@ -59,7 +54,6 @@ export const BUILTIN_TOOL_DEFINITIONS: ToolDefinition[] = [
       { name: 'path', description: 'Vault-relative path to the existing note', type: 'string', required: true },
       { name: 'content', description: 'Markdown content to append', type: 'string', required: true },
     ],
-    kind: 'builtin',
   },
   {
     name: 'append_daily_note',
@@ -72,13 +66,11 @@ export const BUILTIN_TOOL_DEFINITIONS: ToolDefinition[] = [
         required: true,
       },
     ],
-    kind: 'builtin',
   },
   {
     name: 'get_date_time',
     description: 'Get the current date and time.',
     parameters: [],
-    kind: 'builtin',
   },
 ];
 
@@ -141,7 +133,7 @@ async function executeSearchVault(toolCallId: string, args: Record<string, unkno
       return { toolCallId, name: 'search_vault', output: 'No notes found matching that query and the vault appears to be empty.' };
     }
     const formatted = recent
-      .map((n, i) => `${i + 1}. **${n.title}** (${n.id})\n   ${(n.semanticSummary ?? n.summary) || 'No summary.'}`)
+      .map((n, i) => `${i + 1}. **${n.title}** (${n.id})\n   ${n.summary || 'No summary.'}`)
       .join('\n');
     return {
       toolCallId,
@@ -151,7 +143,7 @@ async function executeSearchVault(toolCallId: string, args: Record<string, unkno
   }
 
   const formatted = results
-    .map((r, i) => `${i + 1}. **${r.note.title}** (${r.note.id})\n   ${(r.note.semanticSummary ?? r.note.summary) || 'No summary.'}`)
+    .map((r, i) => `${i + 1}. **${r.note.title}** (${r.note.id})\n   ${r.note.summary || 'No summary.'}`)
     .join('\n');
   return { toolCallId, name: 'search_vault', output: `Found ${results.length} notes:\n${formatted}` };
 }
@@ -257,11 +249,6 @@ export async function executePendingWrite(
       });
       await upsertLinks(pendingWrite.path, parsed.outlinks);
 
-      // Embed immediately if model is loaded
-      if (gloveReady()) {
-        const vec = gloveEmbed(parsed.body);
-        if (vec) await setEmbedding(pendingWrite.path, Array.from(vec));
-      }
     }
   } catch {
     // Non-critical — the note is still written to disk

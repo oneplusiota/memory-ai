@@ -4,15 +4,13 @@ import {
   FlatList,
   Keyboard,
   Pressable,
-  ScrollView,
   StyleSheet,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { ActivityIndicator, Text } from 'react-native-paper';
-import { useNavigation, useRoute } from '@react-navigation/native';
-import type { RouteProp } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import type { StackNavigationProp } from '@react-navigation/stack';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,23 +18,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChatBubble } from '@/components/ChatBubble';
 import { useConversation } from '@/hooks/useConversation';
 import type { RootStackParamList } from '@/navigation/AppNavigator';
-import type { ConversationMode } from '@/types';
-
-const MODES: { id: ConversationMode; label: string }[] = [
-  { id: 'journal', label: 'Journal' },
-  { id: 'coach', label: 'Coach' },
-  { id: 'analyst', label: 'Analyst' },
-  { id: 'devil', label: "Devil's Advocate" },
-  { id: 'tool_builder', label: '🔧 Tool Builder' },
-];
 
 type Nav = StackNavigationProp<RootStackParamList, 'Conversation'>;
-type Route = RouteProp<RootStackParamList, 'Conversation'>;
 
 export function ConversationScreen() {
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
-  const route = useRoute<Route>();
   const flatListRef = useRef<FlatList>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const keyboardHeight = useRef(new Animated.Value(0)).current;
@@ -57,20 +44,9 @@ export function ConversationScreen() {
 
   const {
     messages, transcript, isRecording, isSending, error,
-    lastSuggestSave, conversationMode, setConversationMode,
     toolSteps, pendingConfirm, confirmToolWrite,
-    handleTranscriptChange, toggleRecording,
-    sendMessage, saveToVault, loadConversation, persistConversation, clearConversation,
-  } = useConversation(route.params?.initialMode as ConversationMode | undefined);
-
-  // Load a past conversation when vaultUri becomes available (loadConversation
-  // changes reference only when vaultUri changes, so this retries until ready)
-  const resumeFilePath = route.params?.resumeFilePath;
-  useEffect(() => {
-    if (resumeFilePath && messages.length === 0) {
-      loadConversation(resumeFilePath);
-    }
-  }, [resumeFilePath, loadConversation]);
+    handleTranscriptChange, toggleRecording, sendMessage, clearConversation,
+  } = useConversation();
 
   // Pulsing animation for mic icon while recording
   useEffect(() => {
@@ -94,26 +70,9 @@ export function ConversationScreen() {
     }
   }, [messages.length]);
 
-  // Auto-persist on navigate away
-  useEffect(() => {
-    const unsub = navigation.addListener('blur', () => persistConversation());
-    return unsub;
-  }, [navigation, persistConversation]);
-
   const handleSend = () => {
     if (!transcript.trim() || isSending) return;
     sendMessage();
-  };
-
-  const handleSaveToVault = async () => {
-    const result = await saveToVault();
-    if (result) {
-      navigation.navigate('Confirm', {
-        decision: result.decision,
-        vaultUri: result.vaultUri,
-        conversationFilePath: result.conversationFilePath ?? undefined,
-      });
-    }
   };
 
   const hasText = transcript.trim().length > 0;
@@ -129,41 +88,10 @@ export function ConversationScreen() {
               <MaterialCommunityIcons name="plus" size={22} color="#374151" />
             </TouchableOpacity>
           )}
-          <TouchableOpacity onPress={() => navigation.navigate('Tools')} style={styles.headerBtn}>
-            <MaterialCommunityIcons name="tools" size={22} color="#374151" />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => navigation.navigate('History')} style={styles.headerBtn}>
-            <MaterialCommunityIcons name="clock-outline" size={22} color="#374151" />
-          </TouchableOpacity>
           <TouchableOpacity onPress={() => navigation.navigate('Settings')} style={styles.headerBtn}>
             <MaterialCommunityIcons name="cog-outline" size={22} color="#374151" />
           </TouchableOpacity>
         </View>
-      </View>
-
-      {/* Mode chip row */}
-      <View style={styles.modeBar}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.modeBarContent}
-        >
-          {MODES.map((m) => {
-            const active = conversationMode === m.id;
-            return (
-              <TouchableOpacity
-                key={m.id}
-                onPress={() => setConversationMode(m.id)}
-                style={[styles.modeChip, active && styles.modeChipActive]}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.modeChipText, active && styles.modeChipTextActive]}>
-                  {m.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
       </View>
 
       {/* Chat list */}
@@ -173,17 +101,7 @@ export function ConversationScreen() {
         keyExtractor={(m) => m.id}
         style={styles.list}
         contentContainerStyle={styles.listContent}
-        renderItem={({ item, index }) => (
-          <ChatBubble
-            message={item}
-            suggestSave={
-              item.role === 'assistant' &&
-              index === messages.length - 1 &&
-              lastSuggestSave
-            }
-            onSave={handleSaveToVault}
-          />
-        )}
+        renderItem={({ item }) => <ChatBubble message={item} />}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <MaterialCommunityIcons name="microphone-outline" size={48} color="#D1D5DB" />
@@ -217,9 +135,7 @@ export function ConversationScreen() {
           <View style={styles.confirmCard}>
             <Text style={styles.confirmTitle}>Allow write?</Text>
             <Text style={styles.confirmDesc}>
-              {pendingConfirm.toolName === 'create_event'
-                ? `Create calendar event: ${pendingConfirm.path}`
-                : `Write to "${pendingConfirm.path}"`}
+              {`Write to "${pendingConfirm.path}"`}
             </Text>
             <View style={styles.confirmBtns}>
               <Pressable style={[styles.confirmBtn, styles.confirmDeny]} onPress={() => confirmToolWrite(false)}>
@@ -320,38 +236,6 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 17, fontWeight: '600', color: '#111827' },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   headerBtn: { padding: 8 },
-
-  modeBar: {
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E5E7EB',
-  },
-  modeBarContent: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    gap: 8,
-    flexDirection: 'row',
-  },
-  modeChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 20,
-    backgroundColor: '#F3F4F6',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  modeChipActive: {
-    backgroundColor: '#6D28D9',
-    borderColor: '#6D28D9',
-  },
-  modeChipText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#6B7280',
-  },
-  modeChipTextActive: {
-    color: '#FFFFFF',
-  },
 
   list: { flex: 1, backgroundColor: '#FFFFFF' },
   listContent: { paddingVertical: 16, flexGrow: 1, justifyContent: 'flex-end' },

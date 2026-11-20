@@ -38,9 +38,3 @@ export function getReadableDailyTitle(): string {
   const month = d.toLocaleDateString('en-GB', { month: 'long' });
   return `${weekday} - ${day} ${month} ${d.getFullYear()}`;
 }
-
-export function sanitizeDates(content: string, correctYear: string): string {
-  return content.replace(/\b(20\d{2})\b/g, (match) =>
-    match === correctYear ? match : correctYear,
-  );
-}

@@ -37,14 +37,11 @@ Built for Android as a native APK using React Native + Expo bare workflow.
 ## Features
 
 - 🎙️ **Tap-to-record** — big thumb-reach mic button, live editable transcript, continuous Android STT that restarts on silence and falls back to on-device recognition offline
-- 🧠 **AI conversation** — chat with an assistant that knows your notes (answers questions, acknowledges captures)
-- 🤖 **Agentic tool calling** — AI can search your vault, read/create/update notes, and search the web during a conversation
-- 📝 **Smart routing** — AI decides whether to log to the daily note, update an existing atom, or create a new one
-- 📂 **Obsidian-native structure** — `daily/`, `atoms/`, `conversations/` with Dataview-compatible frontmatter
-- 🔍 **Local hybrid search** — on-device TF-IDF + wikilink graph, no API calls for indexing
-- 📚 **Conversation history** — every session saved to your vault, viewable in-app
+- 🧠 **AI assistant** — chat with an assistant that can search your notes and answer from them
+- 🤖 **Tool calling** — the AI can search your vault, read, create and update notes (writes ask for confirmation)
+- 📂 **Obsidian-compatible vault** — `daily/` and `atoms/` notes with Dataview-friendly frontmatter
+- 🔍 **Local search** — on-device keyword search over your index, no API calls for indexing
 - 🔄 **Multi-provider LLM** — OpenRouter (free models), Gemini, Groq, or Claude
-- 🛠️ **Custom tools** — define your own tools as `.tool.md` files in your vault
 - ✏️ **Edit while speaking** — fix words in real-time before sending
 
 ---
@@ -75,25 +72,17 @@ Haiku 4.5, Sonnet 4.6, Opus 4.8 — pay-per-use.
 
 ## AI Tools
 
-When a vault is connected, the AI runs in **agentic mode** and can call tools during a conversation:
+When a vault is connected, the AI can call tools during a conversation:
 
 | Tool | Description |
 |---|---|
-| `search_vault` | Hybrid TF-IDF + graph search across your notes |
+| `search_vault` | Keyword search across your notes |
 | `read_note` | Read a specific note by path |
-| `create_note` | Create a new atom note |
-| `update_note` | Append to an existing note |
+| `create_note` | Create a new note (asks for confirmation) |
+| `update_note` | Append to an existing note (asks for confirmation) |
 | `append_daily_note` | Add a log entry to today's daily note |
-| `list_notes` | List notes filtered by type/area/status |
+| `list_notes` | List notes filtered by type or tag |
 | `get_date_time` | Current date and time |
-| `web_search` | Search the web (Tavily or Serper/Google) |
-| Custom `.tool.md` | User-defined tools stored in `vault/tools/` |
-
-**Agent modes** (configurable in Settings):
-- **Agentic loop** — AI calls tools in sequence until the task is complete
-- **Single call** — one round of tool calls, then stops
-
-Write operations (create/update note) always ask for confirmation before executing.
 
 ---
 
@@ -119,11 +108,10 @@ Live Editable Transcript
         ↓
 Send Message
         ↓
-AgentClient — agentic tool-calling loop
-  ├── search_vault  → HybridSearch (TF-IDF + wikilink graph)
+AgentClient — tool-calling loop
+  ├── search_vault  → keyword search over the local index
   ├── read_note     → VaultScanner + MarkdownParser
-  ├── create/update → VaultWriter (confirm before write)
-  └── web_search    → Tavily / Serper (Google) API
+  └── create/update → VaultWriter (confirm before write)
         ↓
 LLMClient (provider-agnostic façade)
   └── LLMAdapterFactory
@@ -132,12 +120,6 @@ LLMClient (provider-agnostic façade)
         └── ClaudeAdapter      (api.anthropic.com)
         ↓
 AI Response displayed in chat
-        ↓
-[Optional] Save to Vault
-        ↓
-RoutingDecision JSON → appendToDailyNote() + createAtom/updateAtom()
-        ↓
-Re-index changed files in-memory
 ```
 
 ---
@@ -148,21 +130,14 @@ Re-index changed files in-memory
 vault/
 ├── daily/
 │   └── 2026-05-28.md          # One per day, ISO week in frontmatter
-├── atoms/
-│   ├── James-Smith.md          # type: person, area: work, status: active
-│   └── Q3-Roadmap.md           # type: project, status: active
-├── conversations/
-│   └── 2026-05-28-had-a-meeting.md
-└── tools/                      # Optional custom tool definitions
-    └── MyTool.tool.md
+└── atoms/
+    ├── James-Smith.md          # type: person, area: work, status: active
+    └── Q3-Roadmap.md           # type: project, status: active
 ```
 
 **Dataview queries this enables:**
 ```dataview
 TABLE type, area, status FROM "atoms" WHERE status = "active"
-```
-```dataview
-LIST FROM "conversations" WHERE saved_to_vault = true
 ```
 
 ---
@@ -177,7 +152,7 @@ LIST FROM "conversations" WHERE saved_to_vault = true
 | Voice STT | `expo-speech-recognition` (Android native, continuous) |
 | LLM | `LLMAdapterFactory` — OpenRouter, Gemini, Groq, Claude adapters |
 | Agent loop | Custom `AgentClient` with tool-calling |
-| Local search | In-memory TF-IDF + BFS wikilink graph |
+| Local search | SQLite index + keyword scoring |
 | UI | React Native Paper + React Native Reanimated |
 | Navigation | React Navigation stack |
 | Storage | `expo-secure-store` for API keys & settings |
@@ -201,13 +176,6 @@ LIST FROM "conversations" WHERE saved_to_vault = true
 ### Claude (Anthropic) — Pay-per-use
 1. Go to [console.anthropic.com](https://console.anthropic.com) → **API Keys** → **Create Key**
 2. Requires a funded account; see [Anthropic pricing](https://www.anthropic.com/pricing)
-
-### Tavily (web search) — Free tier (1,000 searches/month)
-1. Go to [app.tavily.com](https://app.tavily.com) → Sign up → copy your API key
-
-### Serper (web search alternative — real Google results) — Free tier (2,500 queries/month)
-1. Go to [serper.dev](https://serper.dev) → Sign up → **API Keys** → copy your key
-2. Enter it in Settings → Web Search → Serper (Google)
 
 ---
 
@@ -296,8 +264,6 @@ Had 1:1 with [[James Smith]]. Updated [[Q3-Roadmap]].
 - [ ] Follow up on deadline
 ```
 
-### Conversation file (`conversations/YYYY-MM-DD-slug.md`)
-```yaml
 ---
 title: "Had a 1:1 with James"
 type: conversation

@@ -4,15 +4,7 @@ import { Button, Snackbar, Text, TextInput } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { useVault } from '@/hooks/useVault';
-import { clearNotes, getAllNotes, getNoteCount, upsertNote, upsertLinks, setEmbedding } from '@/services/db/VaultDB';
-import {
-  isModelDownloaded as gloveModelDownloaded,
-  downloadModel as gloveDownloadModel,
-  loadVocab as gloveLoadVocab,
-  isReady as gloveReady,
-  embed as gloveEmbed,
-  deleteModel as gloveDeleteModel,
-} from '@/services/search/GloveService';
+import { clearNotes, getNoteCount, upsertNote, upsertLinks } from '@/services/db/VaultDB';
 import { StorageAccessFramework } from 'expo-file-system/legacy';
 import { scanVaultForMarkdown } from '@/services/vault/VaultScanner';
 import { parseNote } from '@/services/vault/MarkdownParser';
@@ -22,14 +14,7 @@ import {
   saveGeminiKey, saveGroqKey, saveClaudeKey, saveOpenRouterKey, saveActiveProvider,
   saveGeminiModelPref, saveGroqModelPref, saveClaudeModelPref, saveOpenRouterModelPref, loadStoredKeys,
 } from '@/services/llm/ProviderConfig';
-import {
-  saveWebSearchProvider, saveTavilyKey, saveSerperKey,
-  loadStoredWebSearchKeys,
-} from '@/services/tools/WebSearchClient';
-import type { AgentMode, LLMProvider, WebSearchProvider } from '@/types';
-import * as SecureStore from 'expo-secure-store';
-
-const AGENT_MODE_KEY = 'agent_mode';
+import type { LLMProvider } from '@/types';
 
 const GEMINI_MODELS = [
   { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', desc: 'Free tier · recommended' },
@@ -72,16 +57,6 @@ const LLM_PROVIDERS: { value: LLMProvider; label: string; desc: string }[] = [
   { value: 'gemini', label: 'Gemini', desc: 'Google AI Studio · free tier' },
   { value: 'groq', label: 'Groq', desc: 'Fast · free tier' },
   { value: 'claude', label: 'Claude', desc: 'Anthropic · pay-per-use' },
-];
-
-const WEB_SEARCH_PROVIDERS: { value: WebSearchProvider; label: string; desc: string }[] = [
-  { value: 'tavily', label: 'Tavily', desc: '1,000 searches/mo free · best for AI' },
-  { value: 'serper', label: 'Serper (Google)', desc: '2,500 queries/mo free · real Google results' },
-];
-
-const AGENT_MODES: { value: AgentMode; label: string; desc: string }[] = [
-  { value: 'agentic', label: 'Agentic loop', desc: 'AI calls tools in sequence until done' },
-  { value: 'single', label: 'Single call', desc: 'One round of tool calls, then stops' },
 ];
 
 // ── Reusable UI components ─────────────────────────────────────────────────
@@ -222,13 +197,6 @@ export function SettingsScreen() {
   const [noteCount, setNoteCount] = useState(0);
   const [snack, setSnack] = useState('');
 
-  // GloVe semantic search state
-  const [gloveDownloaded, setGloveDownloaded] = useState(false);
-  const [gloveLoaded, setGloveLoaded] = useState(false);
-  const [gloveDownloading, setGloveDownloading] = useState(false);
-  const [gloveDownloadProgress, setGloveDownloadProgress] = useState(0);
-  const [embeddedCount, setEmbeddedCount] = useState(0);
-
   // LLM state
   const [activeProvider, setActiveProviderState] = useState<LLMProvider>('openrouter');
   const [geminiKey, setGeminiKeyState] = useState('');
@@ -239,14 +207,6 @@ export function SettingsScreen() {
   const [geminiModel, setGeminiModelState] = useState('gemini-2.5-flash');
   const [groqModel, setGroqModelState] = useState('llama-3.3-70b-versatile');
   const [claudeModel, setClaudeModelState] = useState('claude-sonnet-4-6');
-
-  // Web search state
-  const [webSearchProvider, setWebSearchProviderState] = useState<WebSearchProvider>('tavily');
-  const [tavilyKey, setTavilyKeyState] = useState('');
-  const [serperKey, setSerperKeyState] = useState('');
-
-  // Agent / STT state
-  const [agentMode, setAgentModeState] = useState<AgentMode>('agentic');
 
   // Modal state — one open at a time
   const [openModal, setOpenModal] = useState<string | null>(null);
@@ -265,28 +225,10 @@ export function SettingsScreen() {
       setGroqModelState(stored.groqModel);
       setClaudeModelState(stored.claudeModel);
 
-      const { tavilyKey: tk, serperKey: sk, provider: wsp } = await loadStoredWebSearchKeys();
-      if (tk) setTavilyKeyState(tk);
-      if (sk) setSerperKeyState(sk);
-      setWebSearchProviderState(wsp);
-
-      const am = await SecureStore.getItemAsync(AGENT_MODE_KEY);
-      if (am) setAgentModeState(am as AgentMode);
-
       // Load note count from SQLite
       const count = await getNoteCount();
       setNoteCount(count);
 
-      // Count notes with embeddings
-      const allNotes = await getAllNotes();
-      setEmbeddedCount(allNotes.filter(n => n.embedding && n.embedding.length > 0).length);
-
-      // Check GloVe model state
-      const downloaded = await gloveModelDownloaded();
-      setGloveDownloaded(downloaded);
-      if (downloaded) {
-        gloveLoadVocab().then(() => setGloveLoaded(gloveReady()));
-      }
     })();
   }, []);
 
@@ -366,34 +308,6 @@ export function SettingsScreen() {
     setSnack('Claude model updated.');
   }, []);
 
-  const handleSaveTavilyKey = useCallback(async () => {
-    const key = keyDraft.trim();
-    if (!key) return;
-    await saveTavilyKey(key);
-    setTavilyKeyState(key);
-    setSnack('Tavily API key saved.');
-  }, [keyDraft]);
-
-  const handleSaveSerperKey = useCallback(async () => {
-    const key = keyDraft.trim();
-    if (!key) return;
-    await saveSerperKey(key);
-    setSerperKeyState(key);
-    setSnack('Serper API key saved.');
-  }, [keyDraft]);
-
-  const handleSelectWebSearch = useCallback(async (p: WebSearchProvider) => {
-    setWebSearchProviderState(p);
-    await saveWebSearchProvider(p);
-    const label = WEB_SEARCH_PROVIDERS.find(x => x.value === p)?.label ?? p;
-    setSnack(`Web search set to ${label}.`);
-  }, []);
-
-  const handleSelectAgentMode = useCallback(async (m: AgentMode) => {
-    setAgentModeState(m);
-    await SecureStore.setItemAsync(AGENT_MODE_KEY, m);
-  }, []);
-
   const openKeyModal = (id: string, currentValue: string) => {
     setKeyDraft(currentValue);
     setOpenModal(id);
@@ -404,8 +318,6 @@ export function SettingsScreen() {
   const groqModelLabel = GROQ_MODELS.find(m => m.value === groqModel)?.label ?? groqModel;
   const openrouterModelLabel = OPENROUTER_MODELS.find(m => m.value === openrouterModel)?.label ?? openrouterModel;
   const claudeModelLabel = CLAUDE_MODELS.find(m => m.value === claudeModel)?.label ?? claudeModel;
-  const webSearchLabel = WEB_SEARCH_PROVIDERS.find(p => p.value === webSearchProvider)?.label ?? webSearchProvider;
-  const agentModeLabel = AGENT_MODES.find(m => m.value === agentMode)?.label ?? agentMode;
   const providerLabel = LLM_PROVIDERS.find(p => p.value === activeProvider)?.label ?? activeProvider;
 
   const rebuildIndex = useCallback(async (uri: string) => {
@@ -414,7 +326,6 @@ export function SettingsScreen() {
     try {
       const files = await scanVaultForMarkdown(uri);
       setNoteCount(files.length);
-      const modelReady = gloveReady();
       for (const file of files) {
         const content = await StorageAccessFramework.readAsStringAsync(file.uri);
         const parsed = parseNote(content, noteTitle(file.relativePath));
@@ -431,46 +342,14 @@ export function SettingsScreen() {
           lastModified: Date.now(),
         });
         await upsertLinks(file.relativePath, parsed.outlinks);
-        if (modelReady) {
-          const vec = gloveEmbed(parsed.body);
-          if (vec) await setEmbedding(file.relativePath, Array.from(vec));
-        }
       }
-      const embCount = modelReady ? files.length : 0;
-      setEmbeddedCount(embCount);
-      setSnack(`Indexed ${files.length} notes${modelReady ? ' with embeddings' : ''}.`);
+      setSnack(`Indexed ${files.length} notes.`);
     } catch (e: any) {
       setSnack(`Indexing failed: ${e.message}`);
     } finally {
       setIndexing(false);
     }
   }, []);
-
-  const handleReindexAndEmbed = useCallback(async (uri: string) => {
-    setOpenModal(null);
-    // Download & load model if not already available
-    if (!gloveDownloaded) {
-      setGloveDownloading(true);
-      setGloveDownloadProgress(0);
-      try {
-        await gloveDownloadModel((p) => setGloveDownloadProgress(Math.round(p * 100)));
-        setGloveDownloaded(true);
-        await gloveLoadVocab();
-        setGloveLoaded(gloveReady());
-      } catch (e: any) {
-        setSnack(`Download failed: ${e.message}`);
-        setGloveDownloading(false);
-        return;
-      }
-      setGloveDownloading(false);
-    } else if (!gloveLoaded) {
-      await gloveLoadVocab();
-      setGloveLoaded(gloveReady());
-    }
-    await rebuildIndex(uri);
-  }, [gloveDownloaded, gloveLoaded, rebuildIndex]);
-
-
 
   const handlePickVault = useCallback(async () => {
     try {
@@ -567,48 +446,6 @@ export function SettingsScreen() {
 
         <Divider />
 
-        {/* ── WEB SEARCH ── */}
-        <SectionHeader title="WEB SEARCH" />
-        <View style={styles.card}>
-          <SettingRow
-            icon="magnify"
-            label="Search Provider"
-            value={webSearchLabel}
-            onPress={() => setOpenModal('web_search_provider')}
-          />
-          <View style={styles.cardDivider} />
-          {webSearchProvider === 'tavily' ? (
-            <SettingRow
-              icon="key-outline"
-              label="Tavily API Key"
-              value={maskKey(tavilyKey)}
-              onPress={() => openKeyModal('tavily_key', tavilyKey)}
-            />
-          ) : (
-            <SettingRow
-              icon="key-outline"
-              label="Serper API Key"
-              value={maskKey(serperKey)}
-              onPress={() => openKeyModal('serper_key', serperKey)}
-            />
-          )}
-        </View>
-
-        <Divider />
-
-        {/* ── AGENT MODE ── */}
-        <SectionHeader title="AGENT MODE" />
-        <View style={styles.card}>
-          <SettingRow
-            icon="robot-outline"
-            label="Execution Mode"
-            value={agentModeLabel}
-            onPress={() => setOpenModal('agent_mode')}
-          />
-        </View>
-
-        <Divider />
-
         {/* ── VAULT ── */}
         <SectionHeader title="VAULT" />
         <View style={styles.card}>
@@ -618,9 +455,7 @@ export function SettingsScreen() {
             value={
               !vaultUri ? 'Not connected' :
               noteCount === 0 ? 'Connected · not indexed' :
-              !gloveDownloaded ? `${noteCount} notes · no semantic model` :
-              embeddedCount === 0 ? `${noteCount} notes · no embeddings yet` :
-              `${noteCount} notes · ${embeddedCount} embeddings`
+              `${noteCount} notes`
             }
             onPress={() => setOpenModal('vault')}
           />
@@ -660,22 +495,6 @@ export function SettingsScreen() {
         options={CLAUDE_MODELS}
         selected={claudeModel}
         onSelect={handleSelectClaudeModel}
-        onClose={() => setOpenModal(null)}
-      />
-      <PickerModal
-        visible={openModal === 'web_search_provider'}
-        title="Web Search Provider"
-        options={WEB_SEARCH_PROVIDERS}
-        selected={webSearchProvider}
-        onSelect={handleSelectWebSearch}
-        onClose={() => setOpenModal(null)}
-      />
-      <PickerModal
-        visible={openModal === 'agent_mode'}
-        title="Agent Execution Mode"
-        options={AGENT_MODES}
-        selected={agentMode}
-        onSelect={handleSelectAgentMode}
         onClose={() => setOpenModal(null)}
       />
       <PickerModal
@@ -734,25 +553,6 @@ export function SettingsScreen() {
         onSave={handleSaveClaudeKey}
         onClose={() => setOpenModal(null)}
       />
-      <KeyModal
-        visible={openModal === 'tavily_key'}
-        title="Tavily API Key"
-        placeholder="tvly-..."
-        value={keyDraft}
-        onChange={setKeyDraft}
-        onSave={handleSaveTavilyKey}
-        onClose={() => setOpenModal(null)}
-      />
-      <KeyModal
-        visible={openModal === 'serper_key'}
-        title="Serper API Key"
-        placeholder="Get yours free at serper.dev"
-        value={keyDraft}
-        onChange={setKeyDraft}
-        onSave={handleSaveSerperKey}
-        onClose={() => setOpenModal(null)}
-      />
-
       {/* ── Vault modal ── */}
       <Modal visible={openModal === 'vault'} transparent animationType="slide" onRequestClose={() => setOpenModal(null)}>
         <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setOpenModal(null)} />
@@ -762,11 +562,11 @@ export function SettingsScreen() {
 
           {vaultUri ? (
             <>
-              {/* Re-index + Semantic Search (combined) */}
+              {/* Re-index */}
               <TouchableOpacity
                 style={styles.vaultActionRow}
-                activeOpacity={(indexing || gloveDownloading) ? 1 : 0.7}
-                onPress={() => { if (!indexing && !gloveDownloading) handleReindexAndEmbed(vaultUri); }}
+                activeOpacity={indexing ? 1 : 0.7}
+                onPress={() => { if (!indexing) { setOpenModal(null); rebuildIndex(vaultUri); } }}
               >
                 <View style={styles.vaultActionIcon}>
                   <MaterialCommunityIcons name="folder-refresh-outline" size={20} color="#6D28D9" />
@@ -774,15 +574,11 @@ export function SettingsScreen() {
                 <View style={styles.vaultActionText}>
                   <Text style={styles.vaultActionLabel}>Re-index Vault</Text>
                   <Text style={styles.vaultActionDesc}>
-                    {gloveDownloading
-                      ? `Downloading semantic model… ${gloveDownloadProgress}%`
-                      : indexing
-                        ? 'Indexing…'
-                        : !gloveDownloaded
-                          ? `${noteCount > 0 ? `${noteCount} notes indexed` : 'Not indexed yet'} · will download semantic model on first run`
-                          : noteCount > 0
-                            ? `${noteCount} notes · ${embeddedCount} embeddings`
-                            : 'Scan vault and rebuild index with semantic embeddings'}
+                    {indexing
+                      ? 'Indexing…'
+                      : noteCount > 0
+                        ? `${noteCount} notes indexed`
+                        : 'Scan the vault and rebuild the index'}
                   </Text>
                 </View>
               </TouchableOpacity>

@@ -1,67 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useVoice } from './useVoice';
 import { useVault } from './useVault';
-import { searchNotes } from '@/services/search/HybridSearch';
 import { getAllNotes } from '@/services/db/VaultDB';
-import { embed as gloveEmbed, isReady as gloveReady } from '@/services/search/GloveService';
-import { chat, saveConversation } from '@/services/gemini/ConversationClient';
-import { buildSystemPrompt, buildAtomIndexBlock } from '@/services/gemini/ConversationPrompt';
-import { saveConversationFile, readConversationMessages, overwriteConversationFile, readLifeContext } from '@/services/vault/VaultWriter';
-import { refreshLifeContext } from '@/services/llm/LifeContextClient';
+import { chat } from '@/services/gemini/ConversationClient';
+import { buildSystemPrompt, buildIndexBlock } from '@/services/gemini/ConversationPrompt';
 import { agentChat } from '@/services/tools/AgentClient';
 import type { ToolStepEvent } from '@/services/tools/AgentClient';
 import { BUILTIN_TOOL_DEFINITIONS } from '@/services/tools/BuiltinTools';
-import { WEB_SEARCH_TOOL_DEFINITION } from '@/services/tools/WebSearchClient';
-import { loadCustomTools } from '@/services/tools/ToolRegistry';
-import type { AgentMode, ConversationMessage, ConversationMode, RoutingDecision, ToolDefinition } from '@/types';
-import * as SecureStore from 'expo-secure-store';
-
-const AGENT_MODE_KEY = 'agent_mode';
-
-const CONVERSATION_MODE_KEY = 'conversation_mode';
+import type { ConversationMessage } from '@/types';
 
 let msgIdCounter = 0;
 const mkId = () => String(++msgIdCounter);
 
-export function useConversation(initialMode?: ConversationMode) {
+const normalize = (t: string) => t.replace(/\s+/g, ' ').trim();
+
+export function useConversation() {
   const { vaultUri } = useVault();
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const messagesRef = useRef<ConversationMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastSuggestSave, setLastSuggestSave] = useState(false);
-  const [conversationMode, setConversationModeState] = useState<ConversationMode>(initialMode ?? 'journal');
-  const conversationFilePathRef = useRef<string | null>(null);
-  const lifeContextRef = useRef<string | null>(null);
-
-  // Keep ref in sync so persistConversation never reads a stale closure
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
-
-  // Load persisted conversation mode on mount; skip if caller supplied initialMode
-  useEffect(() => {
-    if (initialMode) return;
-    SecureStore.getItemAsync(CONVERSATION_MODE_KEY).then((v) => {
-      if (v) setConversationModeState(v as ConversationMode);
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const setConversationMode = useCallback(async (mode: ConversationMode) => {
-    setConversationModeState(mode);
-    await SecureStore.setItemAsync(CONVERSATION_MODE_KEY, mode);
-  }, []);
-
-  // Load life context once vault is available
-  useEffect(() => {
-    if (!vaultUri) return;
-    readLifeContext(vaultUri).then(ctx => { lifeContextRef.current = ctx; }).catch(() => {});
-  }, [vaultUri]);
-
-  // ── Agent / tools state ──────────────────────────────────────────────────
-  const [agentMode, setAgentModeState] = useState<AgentMode>('agentic');
-  const [customTools, setCustomTools] = useState<ToolDefinition[]>([]);
   const [toolSteps, setToolSteps] = useState<ToolStepEvent[]>([]);
   const confirmCallbackRef = useRef<((confirmed: boolean) => void) | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<{
@@ -70,33 +28,15 @@ export function useConversation(initialMode?: ConversationMode) {
     content: string;
   } | null>(null);
 
-  // Load agent settings and custom tools when vault is ready
-  useEffect(() => {
-    SecureStore.getItemAsync(AGENT_MODE_KEY).then(v => {
-      if (v) setAgentModeState(v as AgentMode);
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!vaultUri) return;
-    loadCustomTools(vaultUri).then(setCustomTools).catch(() => {});
-  }, [vaultUri]);
-
-  const setAgentMode = useCallback(async (mode: AgentMode) => {
-    setAgentModeState(mode);
-    await SecureStore.setItemAsync(AGENT_MODE_KEY, mode);
-  }, []);
-
   const confirmToolWrite = useCallback((confirmed: boolean) => {
     confirmCallbackRef.current?.(confirmed);
     confirmCallbackRef.current = null;
     setPendingConfirm(null);
   }, []);
 
+  // `baseRef` is the committed text; `transcript` is what the box shows (committed + live partial)
   const baseRef = useRef('');
   const [transcript, setTranscript] = useState('');
-
-  const normalize = (t: string) => t.replace(/\s+/g, ' ').trim();
 
   const handleTranscriptChange = useCallback((text: string) => {
     baseRef.current = normalize(text);
@@ -107,8 +47,7 @@ export function useConversation(initialMode?: ConversationMode) {
     const trimmed = partial.trim();
     if (!trimmed) return;
     const base = baseRef.current;
-    const combined = normalize(base ? `${base} ${trimmed}` : trimmed);
-    setTranscript(combined);
+    setTranscript(normalize(base ? `${base} ${trimmed}` : trimmed));
   }, []);
 
   const handleFinalAppend = useCallback((segment: string) => {
@@ -141,17 +80,6 @@ export function useConversation(initialMode?: ConversationMode) {
     }
   }, [isRecording, startListening, stopListening]);
 
-  const autosave = useCallback((msgs: ConversationMessage[]) => {
-    if (!vaultUri || msgs.length === 0) return;
-    if (conversationFilePathRef.current) {
-      overwriteConversationFile(vaultUri, conversationFilePathRef.current, msgs).catch(() => {});
-    } else {
-      saveConversationFile(vaultUri, msgs, false, []).then((path) => {
-        conversationFilePathRef.current = path;
-      }).catch(() => {});
-    }
-  }, [vaultUri]);
-
   const sendText = useCallback(async (finalText: string) => {
     setIsSending(true);
     setError(null);
@@ -159,7 +87,7 @@ export function useConversation(initialMode?: ConversationMode) {
     setTranscript('');
 
     const userMsg: ConversationMessage = {
-      id: mkId(), role: 'user', text: finalText.trim(), timestamp: Date.now(),
+      id: mkId(), role: 'user', text: finalText, timestamp: Date.now(),
     };
     const withUser = [...messagesRef.current, userMsg];
     setMessages(withUser);
@@ -167,31 +95,16 @@ export function useConversation(initialMode?: ConversationMode) {
 
     try {
       setToolSteps([]);
-
-      // tool_builder mode always uses the standard chat path (no tool calling)
-      const useToolCalling = conversationMode !== 'tool_builder' && vaultUri;
-
       let replyText: string;
 
-      if (useToolCalling) {
-        const allTools: ToolDefinition[] = [
-          ...BUILTIN_TOOL_DEFINITIONS,
-          WEB_SEARCH_TOOL_DEFINITION,
-          ...customTools,
-        ];
-
-        const allNotesForIndex = await getAllNotes();
-        const allAtomsForIndex = allNotesForIndex.filter(n => n.id.startsWith('atoms/'));
-        const atomIndex = buildAtomIndexBlock(allAtomsForIndex);
-
+      if (vaultUri) {
+        const indexBlock = buildIndexBlock(await getAllNotes());
         replyText = await agentChat(
           withUser.slice(0, -1), // history without the new user msg (agentChat appends it)
           finalText,
-          buildSystemPrompt(conversationMode, true, lifeContextRef.current ?? undefined, atomIndex || undefined),
-          allTools,
+          buildSystemPrompt(true, indexBlock),
+          BUILTIN_TOOL_DEFINITIONS,
           vaultUri,
-          customTools,
-          agentMode,
           {
             onStep: (event) => setToolSteps(prev => [...prev, event]),
             onConfirmRequired: (toolName, path, content) =>
@@ -201,16 +114,8 @@ export function useConversation(initialMode?: ConversationMode) {
               }),
           },
         );
-        setLastSuggestSave(false);
       } else {
-        const allNotes = await getAllNotes();
-        const queryEmbedding = gloveReady() ? gloveEmbed(finalText) : null;
-        const results = searchNotes(allNotes, finalText, 3, queryEmbedding ?? undefined);
-        const notes = results.map((r) => r.note);
-        const allAtoms = allNotes.filter(n => n.id.startsWith('atoms/'));
-        const response = await chat(withUser, notes, finalText, allAtoms, lifeContextRef.current ?? undefined, conversationMode);
-        replyText = response.reply;
-        setLastSuggestSave(response.suggest_save);
+        replyText = await chat(withUser);
       }
 
       const aiMsg: ConversationMessage = {
@@ -219,22 +124,13 @@ export function useConversation(initialMode?: ConversationMode) {
       const withAI = [...withUser, aiMsg];
       setMessages(withAI);
       messagesRef.current = withAI;
-      autosave(withAI);
-
-      // Refresh life context in background every 3 user messages
-      const userMsgCount = withAI.filter(m => m.role === 'user').length;
-      if (vaultUri && userMsgCount % 3 === 0) {
-        refreshLifeContext(vaultUri, withAI).then(updated => {
-          if (updated) lifeContextRef.current = updated;
-        }).catch(() => {});
-      }
     } catch (e: any) {
       setError(e.message ?? 'Error');
     } finally {
       setIsSending(false);
       resetVoice();
     }
-  }, [resetVoice, autosave, conversationMode, vaultUri, agentMode, customTools]);
+  }, [resetVoice, vaultUri]);
 
   const sendingRef = useRef(false);
 
@@ -252,57 +148,9 @@ export function useConversation(initialMode?: ConversationMode) {
     }
   }, [stopListening, sendText]);
 
-  const saveToVault = useCallback(async (): Promise<{
-    decision: RoutingDecision;
-    vaultUri: string;
-    conversationFilePath: string | null;
-  } | null> => {
-    if (!vaultUri || messages.length === 0) return null;
-    try {
-      const allNotes = await getAllNotes();
-      const allAtoms = allNotes.filter(n => n.id.startsWith('atoms/'));
-      const decision = await saveConversation(messages, allAtoms);
-      return { decision, vaultUri, conversationFilePath: conversationFilePathRef.current };
-    } catch (e: any) {
-      setError(e.message ?? 'Failed to get save decision');
-      return null;
-    }
-  }, [vaultUri, messages]);
-
-  const loadConversation = useCallback(async (filePath: string) => {
-    if (!vaultUri) return;
-    const loaded = await readConversationMessages(vaultUri, filePath);
-    if (loaded.length === 0) return;
-    messagesRef.current = loaded;
-    setMessages(loaded);
-    conversationFilePathRef.current = filePath;
-  }, [vaultUri]);
-
-  const persistConversation = useCallback(async () => {
-    const current = messagesRef.current;
-    if (!vaultUri || current.length === 0) return;
-    try {
-      if (conversationFilePathRef.current) {
-        // Resumed conversation — update the existing file in place
-        await overwriteConversationFile(vaultUri, conversationFilePathRef.current, current);
-      } else {
-        // New conversation — create a new file
-        const path = await saveConversationFile(vaultUri, current, false, []);
-        conversationFilePathRef.current = path;
-      }
-    } catch {
-      // best-effort
-    }
-    // Update life context with anything shared in this conversation
-    refreshLifeContext(vaultUri, current).then(updated => {
-      if (updated) lifeContextRef.current = updated;
-    }).catch(() => {});
-  }, [vaultUri]);
-
   const clearConversation = useCallback(() => {
     setMessages([]);
-    setLastSuggestSave(false);
-    conversationFilePathRef.current = null;
+    messagesRef.current = [];
     baseRef.current = '';
     setTranscript('');
     resetVoice();
@@ -314,21 +162,12 @@ export function useConversation(initialMode?: ConversationMode) {
     isRecording,
     isSending,
     error,
-    lastSuggestSave,
-    conversationMode,
-    setConversationMode,
-    agentMode,
-    setAgentMode,
-    customTools,
     toolSteps,
     pendingConfirm,
     confirmToolWrite,
     handleTranscriptChange,
     toggleRecording,
     sendMessage,
-    saveToVault,
-    loadConversation,
-    persistConversation,
     clearConversation,
   };
 }
